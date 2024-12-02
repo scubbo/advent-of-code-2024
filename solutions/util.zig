@@ -8,6 +8,25 @@ pub fn getInputFile(problemNumber: []const u8, isTestCase: bool) ![]u8 {
     return concatString("inputs/", try concatString(problemNumber, try concatString("/", try concatString(if (isTestCase) "test" else "real", ".txt"))));
 }
 
+// Technically this could be implemented as just repeated calls to `concatString`, but I _guess_ this is more efficient?
+// (I. Hate. Manual memory allocation)
+fn concatStrings(strings: []const []const u8) ![]u8 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var totalLength: usize = 0;
+    for (strings) |string| {
+        totalLength += string.len;
+    }
+    var combined = try allocator.alloc(u8, totalLength);
+    var combinedIndexSoFar: usize = 0;
+    for (strings) |string| {
+        @memcpy(combined[combinedIndexSoFar..(combinedIndexSoFar + string.len)], string);
+        combinedIndexSoFar += string.len;
+    }
+    return combined;
+}
+
 fn concatString(a: []const u8, b: []const u8) ![]u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -36,6 +55,11 @@ const expect = @import("std").testing.expect;
 test {
     const result = try concatString("abc", "def");
     try expect(std.mem.eql(u8, result, "abcdef"));
+}
+
+test "concatStrings" {
+    const result = try concatStrings(&.{ "hello ", "again, ", "friend of ", "a friend" });
+    try expect(std.mem.eql(u8, result, "hello again, friend of a friend"));
 }
 
 test "testGetInputFile" {
