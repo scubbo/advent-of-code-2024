@@ -1,7 +1,8 @@
 const std = @import("std");
 const print = std.debug.print;
+const util = @import("util.zig");
 
-pub fn main() !void {
+pub fn main() !u32 {
     var arr1: [1000]u32 = undefined;
     var arr2: [1000]u32 = undefined;
 
@@ -11,7 +12,9 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const file = try std.fs.cwd().openFile("../inputs/01/real.txt", .{});
+    const path = try util.getInputFile("01", true);
+    std.debug.print("Path is {s}\n", .{path});
+    const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
     // Wrap the file reader in a buffered reader.
@@ -61,6 +64,9 @@ pub fn main() !void {
         }
     }
     try stdout.print("{}", .{sum});
+    // Only used for testing - but later we'll have this return to an actual higher-level `main` function and have
+    // _that_ do printing.
+    return sum;
 }
 
 fn parseLineToNumbers(line: []u8) struct { first: u32, second: u32 } {
@@ -88,4 +94,13 @@ fn parseLineToNumbers(line: []u8) struct { first: u32, second: u32 } {
         }
     }
     return .{ .first = first / 10, .second = second / 10 };
+}
+
+const expect = std.testing.expect;
+
+test {
+    const filePath = try util.getInputFile("01", true);
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("{s}\n\n", .{filePath});
+    try expect(try main() == 11);
 }
