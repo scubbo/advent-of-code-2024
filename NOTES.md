@@ -3,6 +3,8 @@ Notes, thoughts, or questions that arose as I implemented the solutions. Hopeful
 # Things I like
 
 * [Continue expressions](https://zig-by-example.com/while)
+* Built in optionals (with `orelse`)
+* Better error-handling than GoLang's (though that bar is set _real_ low). I have only just scratched the surface, though, it looks interestingly powerful - might well be even better than I've realized at this point!
 
 # Things that I've found missing from this language
 
@@ -10,6 +12,7 @@ I mean, Jesus Christ, right now it seems even worse than GoLang.
 
 * [String concatenation](https://old.reddit.com/r/Zig/comments/bfcsul/concatenating_zig_strings/)
 * [String equality](https://nofmal.github.io/zig-with-example/string-handling/#string-equal)
+* Switching on strings
 
 # Questions
 
@@ -83,3 +86,41 @@ test {
 I can fix it by changing the type signature to accept `[]const u8`, but (I think?) that then means that I can't call the function with non-const-length strings - including strings read from files.
 
 [This](https://stackoverflow.com/questions/72736997/how-to-pass-a-c-string-into-a-zig-function-expecting-a-zig-string) link refers to `[]const u8` as a "Zig-style string-slice", but also refers to `[*c]const u8` as a "c_string", so...:shrug:?
+
+## Why can't I iterate over a HashMap?
+
+The following code:
+
+```zig
+const std = @import("std");
+const print = std.debug.print;
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    var hashMap = std.AutoHashMap(u32, u32).init(allocator);
+
+    try hashMap.put(2, 5);
+    try hashMap.put(1, 35);
+    try hashMap.put(4, 20);
+
+    const iter = hashMap.keyIterator();
+    while (try iter.next()) |key| {
+        print("{}\n", .{key});
+    }
+}
+```
+
+gives:
+
+```
+scratch.zig:15:20: error: expected type '*hash_map.HashMapUnmanaged(u32,u32,hash_map.AutoContext(u32),80).FieldIterator(u32)', found '*const hash_map.HashMapUnmanaged(u32,u32,hash_map.AutoContext(u32),80).FieldIterator(u32)'
+    while (try iter.next()) |key| {
+               ~~~~^~~~~
+scratch.zig:15:20: note: cast discards const qualifier
+/Users/scubbo/zig/zig-macos-x86_64-0.14.0-dev.2362+a47aa9dd9/lib/std/hash_map.zig:894:35: note: parameter type declared here
+                pub fn next(self: *@This()) ?*T {
+```
+
+I _think_ this means that the pointer to the Iterator is a Const-pointer and `.next()` expects a mutable pointer. But, if so - how do we get a mutable pointer from a const? I tried `@ptrCast` but that gave a similar error.
