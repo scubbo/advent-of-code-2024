@@ -3,11 +3,20 @@ const print = std.debug.print;
 const util = @import("util.zig");
 
 pub fn main() !void {
-    const output = try part_one();
+    const output = try part_two();
     print("{}\n", .{output});
 }
 
 pub fn part_one() !u32 {
+    return execute(&is_safe);
+}
+
+pub fn part_two() !u32 {
+    return execute(&is_safe_with_damper);
+}
+
+// Zig doesn't allow `!bool` for implicit error sets when referring to functions as parameter-types, have to list explicitly
+pub fn execute(safe_tester: *const fn (reportAsArray: std.ArrayList(u32)) error{TooSmall, OutOfMemory}!bool) !u32 {
     const isTestCase = true;
     // Reading the input...
     // Making use of example here: https://cookbook.ziglang.cc/01-01-read-file-line-by-line.html
@@ -23,7 +32,7 @@ pub fn part_one() !u32 {
     // Since it's usually faster to read a bunch of bytes at once.
     var buf_reader = std.io.bufferedReader(file.reader());
     const reader = buf_reader.reader();
-
+  
     var line = std.ArrayList(u8).init(allocator);
     defer line.deinit();
 
@@ -37,7 +46,7 @@ pub fn part_one() !u32 {
         line_no += 1;
 
         const report = try parseLineToNumbers(line.items, allocator);
-        if (try is_safe(report)) {
+        if (try safe_tester(report)) {
             safe_count += 1;
         }
         report.deinit();
@@ -67,7 +76,7 @@ pub const IllegalDataError = error{
 // all-decreasing report?") as:
 // - "The first pair of levels is within 1-3"
 // - "For all triples in the report, both pairs have the same direction, and the final pair is within 1-3"
-fn is_safe(reportAsArray: std.ArrayList(u32)) !bool {
+fn is_safe(reportAsArray: std.ArrayList(u32)) error{TooSmall, OutOfMemory}!bool {
     const report = reportAsArray.items;
     // Legality-check that the report contains at least two levels
     if (report.len < 2) {
@@ -104,6 +113,41 @@ fn is_safe(reportAsArray: std.ArrayList(u32)) !bool {
     return true;
 }
 
+
+fn is_safe_with_damper(reportAsArray: std.ArrayList(u32)) error{TooSmall, OutOfMemory}!bool {
+    if (try is_safe(reportAsArray)) {
+        return true;
+    }
+    
+    // Create a new allocator to save having to change the "interface" of the functions to pass a useless allocator
+    // into `is_safe`
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var val_to_drop: u32 = 0;
+    while (val_to_drop < reportAsArray.items.len) {
+
+        // Lol there _must_ be a better way of doing this
+        
+        var array_list_with_dropped_item = std.ArrayList(u32).init(allocator);
+        var i: u32 = 0;
+
+        while (i < reportAsArray.items.len) {
+            if (i != val_to_drop) {
+                try array_list_with_dropped_item.append(reportAsArray.items[i]);
+            }
+            i += 1;
+        }
+        if (try is_safe(array_list_with_dropped_item)) {
+            return true;
+        }
+
+        val_to_drop += 1;
+    }
+    return false;
+}
+
 // TODO - probably extract this to utils?
 // (Though note that this differs from the example in 01.zig)
 fn parseLineToNumbers(line: []u8, allocator: std.mem.Allocator) !std.ArrayList(u32) {
@@ -125,4 +169,8 @@ const expect = std.testing.expect;
 
 test "part one" {
     try expect(try part_one() == 2);
+}
+
+test "part two" {
+    try expect(try part_two() == 4);
 }
