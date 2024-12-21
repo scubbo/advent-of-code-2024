@@ -5,14 +5,30 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    var hashMap = std.AutoHashMap(u32, u32).init(allocator);
 
-    try hashMap.put(2, 5);
-    try hashMap.put(1, 35);
-    try hashMap.put(4, 20);
-
-    const iter = hashMap.keyIterator();
-    while (try iter.next()) |key| {
-        print("{}\n", .{key});
+    var list = std.ArrayList(u8).init(allocator);
+    try list.append('h');
+    try list.append('e');
+    try list.append('l');
+    try list.append('l');
+    try list.append('o');
+    for (list.items) |char| {
+        print("{c}", .{char});
     }
+    list.deinit();
+
+}
+
+fn doIt(string: *const [3:0]u8) *const [9:0]u8 {
+    return "prefix" ++ string;
+}
+
+const expect = @import("std").testing.expect;
+
+test {
+    for (doIt("foo")) |char| {print("{c}", .{char});}
+    print("\n", .{});
+    for ("prefixfoo") |char| {print("{c}", .{char});}
+    print("\n", .{});
+    try expect(std.mem.eql(u8, doIt("foo"), "prefixfoo"));
 }

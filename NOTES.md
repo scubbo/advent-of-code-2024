@@ -5,14 +5,21 @@ Notes, thoughts, or questions that arose as I implemented the solutions. Hopeful
 * [Continue expressions](https://zig-by-example.com/while)
 * Built in optionals (with `orelse`)
 * Better error-handling than GoLang's (though that bar is set _real_ low). I have only just scratched the surface, though, it looks interestingly powerful - might well be even better than I've realized at this point!
+* Creation of "bare" structs - i.e. you can do `myFunction(.{thing})` rather than `myFunction(StructName{thing})` (looking at you, GoLang)
 
 # Things that I've found missing from this language
 
-I mean, Jesus Christ, right now it seems even worse than GoLang.
+Hmmmm, right now it seems even worse than GoLang. Though the Error handling is _so_ much better that I can forgive much of this (which can be hacked-in to personal taste with utility functions, whereas you cannot fix GoLang's Errors as they are built-in language features).
 
 * [String concatenation](https://old.reddit.com/r/Zig/comments/bfcsul/concatenating_zig_strings/)
 * [String equality](https://nofmal.github.io/zig-with-example/string-handling/#string-equal)
 * Switching on strings
+
+## Not "missing", but...
+
+It irritates me that Zig - like GoLang - has continued C's demonstrably-incorrect inversion of the addressing/dereferencing operators. If `*T` is the type-symbol for "_a pointer to a type `T`_", then, for a value `t`, the symbol for "_a pointer to the value `t`_" should be `*t`, not `&t`.
+
+Plus, needing semi-colons on the end of every line? Come _on_, my guy.
 
 # Questions
 
@@ -79,13 +86,17 @@ fn doIt(string: []u8) []u8 {
 const expect = @import("std").testing.expect;
 
 test {
-    expect(std.mem.eql(u8, doIt("foo"), "prefixfoo"))
+    expect(std.mem.eql(u8, doIt("foo"), "prefixfoo"));
 }
 ```
 
 I can fix it by changing the type signature to accept `[]const u8`, but (I think?) that then means that I can't call the function with non-const-length strings - including strings read from files.
 
 [This](https://stackoverflow.com/questions/72736997/how-to-pass-a-c-string-into-a-zig-function-expecting-a-zig-string) link refers to `[]const u8` as a "Zig-style string-slice", but also refers to `[*c]const u8` as a "c_string", so...:shrug:?
+
+---
+
+Further questioning on this [here](https://stackoverflow.com/questions/79298713/how-can-i-write-a-zig-function-that-can-accept-and-return-strings).
 
 ## Why can't I iterate over a HashMap?
 
