@@ -1,5 +1,9 @@
 Notes, thoughts, or questions that arose as I implemented the solutions. Hopefully I am able to go back and answer these questions as I keep learning!
 
+# Useful references
+
+* [Zig Notes](https://github.com/david-vanderson/zig-notes) - particularly on Arrays vs. Slices, and Strings.
+
 # Things I like
 
 * [Continue expressions](https://zig-by-example.com/while)
@@ -136,3 +140,59 @@ scratch.zig:15:20: note: cast discards const qualifier
 ```
 
 I _think_ this means that the pointer to the Iterator is a Const-pointer and `.next()` expects a mutable pointer. But, if so - how do we get a mutable pointer from a const? I tried `@ptrCast` but that gave a similar error.
+
+## How to return items accumulated into an ArrayList without causing a memory leak or a segementation fault?
+
+Trimming down the issues that I first saw in problem 05, here's some example code:
+
+```zig
+const std = @import("std");
+const print = std.debug.print;
+
+test "Demo accumulation" {
+    const accumulated = try accumulate();
+    print("DEBUG - accumulated values are {any}\n", .{accumulated});
+}
+
+fn accumulate() ![]u32 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var list = std.ArrayList(u32).init(allocator);
+    // defer list.deinit(); <-- this is the problem line
+    try list.append(1);
+    try list.append(2);
+    try list.append(3);
+    return list.items;
+}
+```
+
+If the "problem line" is commented out, then I get warnings about a memory leak (unsurprisingly); but if it's left in, then I get a segmentation fault when trying to reference the response of the function.
+
+This is all, in some sense, "working as expected" (the compiler is correct to warn about the memory leak) - but it seems like a cumbersom way to work. I suspect that the response would be "_don't return a bare `[]u32`, then_", which feels pretty unsatisfying.
+
+You can't even work around this by creating a buffer (within `accumulate`), copying values into it, `deinit`-ing `list`, and returning the copy - because you can't create an array-buffer without pre-specifying how large it should be, and creating a slice has the same memory-leak issue - see below for example:
+
+```
+test "Demo accumulation" {
+    const accumulated = try accumulate();
+    print("DEBUG - accumulated values are {any}\n", .{accumulated});
+}
+
+fn accumulate() ![]u32 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var list = std.ArrayList(u32).init(allocator);
+    defer list.deinit();
+    try list.append(1);
+    try list.append(2);
+    try list.append(3);
+
+    const response = try allocator.alloc(u32, list.items.len);
+    @memcpy(response, list.items);
+    return response;
+}
+```
