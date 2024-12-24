@@ -50,7 +50,6 @@ fn concat(comptime T: type, allocator: std.mem.Allocator, arr1: []const T, arr2:
     return combined;
 }
 
-
 // Ugh. There are a _ton_ of problems with this because of overflow nonsense - but it's good enough to use until
 // test cases demonstrate that it's not.
 pub fn diffOfNumbers(a: u32, b: u32) u32 {
@@ -60,7 +59,6 @@ pub fn diffOfNumbers(a: u32, b: u32) u32 {
         return b - a;
     }
 }
-
 
 // I originally tried https://cookbook.ziglang.cc/01-01-read-file-line-by-line.html,
 // but it's super-unwieldy.
@@ -76,7 +74,15 @@ pub fn readAllInput(path: []u8) ![]const u8 {
 
     const stat = try file.stat();
     return try file.reader().readAllAlloc(alloc, stat.size);
+}
 
+pub fn readAllInputWithAllocator(path: []u8, alloc: std.mem.Allocator) ![]const u8 {
+    std.debug.print("Path is {s}\n", .{path});
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    return try file.reader().readAllAlloc(alloc, stat.size);
 }
 
 const expect = @import("std").testing.expect;
