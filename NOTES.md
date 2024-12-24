@@ -14,6 +14,7 @@ Hmmmm, right now it seems even worse than GoLang. Though the Error handling is _
 * [String concatenation](https://old.reddit.com/r/Zig/comments/bfcsul/concatenating_zig_strings/)
 * [String equality](https://nofmal.github.io/zig-with-example/string-handling/#string-equal)
 * Switching on strings
+* [Iterating over values of an enum](https://zig.guide/language-basics/enums) - [this](https://ziggit.dev/t/iterating-over-a-packed-enum/6530) suggests that it's possible, but testing indicates that that only works at comptime.
 
 ## Not "missing", but...
 
