@@ -156,9 +156,9 @@ fn is_valid_xmas(data: [][]const u8, starting_point: Location, dir: Direction) b
 
 const expect = std.testing.expect;
 
-// test "part_one" {
-//     try expect(try part_one() == 18);
-// }
+test "part_one" {
+    try expect(try part_one() == 18);
+}
 
 // ==========
 pub fn part_two() !u32 {

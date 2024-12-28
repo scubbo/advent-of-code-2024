@@ -10,6 +10,9 @@ Notes, thoughts, or questions that arose as I implemented the solutions. Hopeful
 * Built in optionals (with `orelse`)
 * Better error-handling than GoLang's (though that bar is set _real_ low). I have only just scratched the surface, though, it looks interestingly powerful - might well be even better than I've realized at this point!
 * Creation of "bare" structs - i.e. you can do `myFunction(.{thing})` rather than `myFunction(StructName{thing})` (looking at you, GoLang)
+* [Continue expressions](https://ziglang.org/documentation/master/#while) - don't need to remember to put the index-incrementing code at the end of every branch!
+* Great powerful `switch` syntax (though not as powerful as Rust's)
+* Labelled loops - _usually_ should be avoided, but helpful on occasion!
 
 # Things that I've found missing from this language
 
