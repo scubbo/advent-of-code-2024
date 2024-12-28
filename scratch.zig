@@ -1,25 +1,26 @@
 const std = @import("std");
 const print = std.debug.print;
 
-test "Demo accumulation" {
-    const accumulated = try accumulate();
-    print("DEBUG - accumulated values are {any}\n", .{accumulated});
-}
+const expect = @import("std").testing.expect;
 
-fn accumulate() ![]u32 {
+test "Len of an iterator is not the same as size" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var list = std.ArrayList(u32).init(allocator);
-    defer list.deinit();
-    try list.append(1);
-    try list.append(2);
-    try list.append(3);
+    var map = std.AutoHashMap(u8, u8).init(allocator);
+    try map.put('a', 'b');
+    try map.put('c', 'd');
+    try map.put('e', 'f');
 
-    const response = try allocator.alloc(u32, list.items.len);
-    @memcpy(response, list.items);
-    return response;
+    var keyIterator = map.keyIterator();
+    const length = keyIterator.len;
+    var counted_length: usize = 0;
+    while (keyIterator.next()) |_| {
+        counted_length += 1;
+    }
+    print("DEBUG - length is {} and counted_length is {}\n", .{ length, counted_length });
+    try expect(length == counted_length);
 }
 
 pub fn main() !void {
@@ -42,5 +43,3 @@ pub fn main() !void {
 fn doIt(string: *const [3:0]u8) *const [9:0]u8 {
     return "prefix" ++ string;
 }
-
-const expect = @import("std").testing.expect;

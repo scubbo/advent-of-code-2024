@@ -13,6 +13,7 @@ Notes, thoughts, or questions that arose as I implemented the solutions. Hopeful
 * [Continue expressions](https://ziglang.org/documentation/master/#while) - don't need to remember to put the index-incrementing code at the end of every branch!
 * Great powerful `switch` syntax (though not as powerful as Rust's)
 * Labelled loops - _usually_ should be avoided, but helpful on occasion!
+* `defer` - though, unlike in GoLang where it's a nice-to-have that allows one to do cleanup, here it is _absolutely essential_ for all the manual `deinit`s and `free`s
 
 # Things that I've found missing from this language
 
@@ -22,6 +23,7 @@ Hmmmm, right now it seems even worse than GoLang. Though the Error handling is _
 * [String equality](https://nofmal.github.io/zig-with-example/string-handling/#string-equal)
 * Switching on strings
 * [Iterating over values of an enum](https://zig.guide/language-basics/enums) - [this](https://ziggit.dev/t/iterating-over-a-packed-enum/6530) suggests that it's possible, but testing indicates that that only works at comptime.
+* [Sets](https://github.com/ziglang/zig/issues/6919) (though, as the top comment points out, that's not _too_ bad as you can abuse a HashMap for it)
 
 ## Not "missing", but...
 
@@ -199,3 +201,7 @@ fn accumulate() ![]u32 {
     return response;
 }
 ```
+
+## What's the point in `HashMap.getOrPut`?
+
+`getOrPut` _doesn't_ actually `put` anything, it _only_ `get`s. See https://ziggit.dev/t/whats-the-point-in-hashmap-getorput/7547.
