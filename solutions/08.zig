@@ -251,11 +251,11 @@ fn divide(num: i32, denom: u32) i32 {
 
 const expect = std.testing.expect;
 
-// test "part_one" {
-//     const part_one_response = try part_one(true);
-//     print("DEBUG - part_one_response is {}\n", .{part_one_response});
-//     try expect(part_one_response == 14);
-// }
+test "part_one" {
+    const part_one_response = try part_one(true);
+    print("DEBUG - part_one_response is {}\n", .{part_one_response});
+    try expect(part_one_response == 14);
+}
 
 test "greatest_common_factor" {
     try expect(gcf(18, 27) == 9);

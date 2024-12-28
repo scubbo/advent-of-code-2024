@@ -24,6 +24,7 @@ Hmmmm, right now it seems even worse than GoLang. Though the Error handling is _
 * Switching on strings
 * [Iterating over values of an enum](https://zig.guide/language-basics/enums) - [this](https://ziggit.dev/t/iterating-over-a-packed-enum/6530) suggests that it's possible, but testing indicates that that only works at comptime.
 * [Sets](https://github.com/ziglang/zig/issues/6919) (though, as the top comment points out, that's not _too_ bad as you can abuse a HashMap for it)
+* [Descending ranges](https://github.com/ziglang/zig/issues/14701) - i.e. `for (10..0)`. Not a big deal, tbf, but annoying when needed!
 
 ## Not "missing", but...
 
