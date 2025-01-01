@@ -3,7 +3,7 @@ const print = std.debug.print;
 const util = @import("util.zig");
 
 pub fn main() !void {
-    const response = try part_one(false);
+    const response = try part_two(false);
     print("{}\n", .{response});
 }
 
@@ -66,6 +66,64 @@ fn part_one(is_test_case: bool) anyerror!u64 {
     return total;
 }
 
+fn getReachablePeaks(grid: [][]u32, start: Location, start_value: u32, so_far: *std.AutoHashMap(Location, bool), alloc: std.mem.Allocator) ?anyerror {
+    if (start_value == 9) {
+        try so_far.put(start, true);
+        return null;
+    }
+
+    // Check up, down, left, right - if they have the right next value, iterate from there
+    const neighbours = try buildNeighbours(grid, start, alloc);
+    for (neighbours) |neighbour| {
+        if (grid[neighbour.y][neighbour.x] == start_value + 1) {
+            const err = getReachablePeaks(grid, neighbour, start_value + 1, so_far, alloc);
+            if (err != null) {
+                return err;
+            }
+        }
+    }
+    alloc.free(neighbours);
+    return null;
+}
+
+// Funnily enough, I actually misread the question and implemented this logic _first_, and was confused why I kept
+// getting test failures :P
+fn part_two(is_test_case: bool) !u64 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const input_file = try util.getInputFile("10", is_test_case);
+    const data = try util.readAllInputWithAllocator(input_file, allocator);
+    defer allocator.free(data);
+
+    const grid = try buildGrid(data, allocator);
+    defer allocator.free(grid);
+    print("{any}\n", .{grid});
+
+    // If we wanted, we could find trailheads during the `buildGrid` iteration, but given the small data sizes I'd much
+    // rather keep small focused functions at the cost of some constant-factor performance.
+    var total: u32 = 0;
+    var i: usize = 0;
+    while (i < grid.len) : (i += 1) {
+        var j: usize = 0;
+        while (j < grid[0].len) : (j += 1) {
+            if (grid[i][j] == 0) {
+                const trailScore = try getTrailScore(grid, Location{ .x = j, .y = i }, 0, allocator);
+                total += trailScore;
+                print("DEBUG - for the trailhead at {}/{}, found a trailscore of {}\n", .{ j, i, trailScore });
+            }
+        }
+    }
+
+    // Wow I do _not_ like memory management
+    for (grid) |line| {
+        allocator.free(line);
+    }
+
+    return total;
+}
+
 fn buildGrid(data: []const u8, alloc: std.mem.Allocator) ![][]u32 {
     var lines = std.ArrayList([]u32).init(alloc);
     defer lines.deinit();
@@ -111,24 +169,22 @@ fn buildNeighbours(grid: [][]u32, location: Location, alloc: std.mem.Allocator) 
     return neighbours.toOwnedSlice();
 }
 
-fn getReachablePeaks(grid: [][]u32, start: Location, start_value: u32, so_far: *std.AutoHashMap(Location, bool), alloc: std.mem.Allocator) ?anyerror {
+fn getTrailScore(grid: [][]u32, start: Location, start_value: u32, alloc: std.mem.Allocator) !u32 {
     if (start_value == 9) {
-        try so_far.put(start, true);
-        return null;
+        return 1;
     }
 
     // Check up, down, left, right - if they have the right next value, iterate from there
+    var total: u32 = 0;
     const neighbours = try buildNeighbours(grid, start, alloc);
     for (neighbours) |neighbour| {
         if (grid[neighbour.y][neighbour.x] == start_value + 1) {
-            const err = getReachablePeaks(grid, neighbour, start_value + 1, so_far, alloc);
-            if (err != null) {
-                return err;
-            }
+            total += try getTrailScore(grid, neighbour, start_value + 1, alloc);
         }
     }
     alloc.free(neighbours);
-    return null;
+    print("DEBUG - trail starting with value {}, at location {}/{}, has value {}\n", .{ start_value, start.y, start.x, total });
+    return total;
 }
 
 const expect = std.testing.expect;
@@ -137,4 +193,10 @@ test "part_one" {
     const part_one_response = try part_one(true);
     print("DEBUG - part_one_response is {}\n", .{part_one_response});
     try expect(part_one_response == 36);
+}
+
+test "part_two" {
+    const part_two_response = try part_two(true);
+    print("DEBUG - part_two_response is {}\n", .{part_two_response});
+    try expect(part_two_response == 81);
 }
