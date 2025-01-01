@@ -3,24 +3,29 @@ const print = std.debug.print;
 
 const expect = @import("std").testing.expect;
 
-test "Len of an iterator is not the same as size" {
+test ".toOwnedSlice does not seem to make deinit unnecessary" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var map = std.AutoHashMap(u8, u8).init(allocator);
-    try map.put('a', 'b');
-    try map.put('c', 'd');
-    try map.put('e', 'f');
+    var listOfLists = std.ArrayList([]u32).init(allocator);
+    try listOfLists.append(try buildAList(0, allocator));
+    try listOfLists.append(try buildAList(1, allocator));
 
-    var keyIterator = map.keyIterator();
-    const length = keyIterator.len;
-    var counted_length: usize = 0;
-    while (keyIterator.next()) |_| {
-        counted_length += 1;
+    const outer_slice = try listOfLists.toOwnedSlice();
+    print("{any}\n", .{outer_slice});
+    for (outer_slice) |inner_slice| {
+        allocator.free(inner_slice);
     }
-    print("DEBUG - length is {} and counted_length is {}\n", .{ length, counted_length });
-    try expect(length == counted_length);
+    allocator.free(outer_slice);
+}
+
+fn buildAList(val: u32, allocator: std.mem.Allocator) ![]u32 {
+    var list = std.ArrayList(u32).init(allocator);
+
+    try list.append(val);
+
+    return list.toOwnedSlice();
 }
 
 pub fn main() !void {

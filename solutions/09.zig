@@ -184,11 +184,11 @@ fn hasSpaceToMove(disk: std.ArrayList(?u32), pointer: usize, file_size: usize) b
 
 const expect = std.testing.expect;
 
-// test "part_one" {
-//     const part_one_response = try part_one(true);
-//     print("DEBUG - part_one_response is {}\n", .{part_one_response});
-//     try expect(part_one_response == 1928);
-// }
+test "part_one" {
+    const part_one_response = try part_one(true);
+    print("DEBUG - part_one_response is {}\n", .{part_one_response});
+    try expect(part_one_response == 1928);
+}
 
 test "part_two" {
     const part_two_response = try part_two(true);
