@@ -2,6 +2,8 @@ const std = @import("std");
 const print = std.debug.print;
 const util = @import("util.zig");
 
+// Part Two seems just plain unfun. _Might_ come back to it, but...ugh.
+
 pub fn main() !void {
     const response = try part_one(false);
     print("{}\n", .{response});
