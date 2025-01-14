@@ -85,6 +85,14 @@ pub fn readAllInputWithAllocator(path: []u8, alloc: std.mem.Allocator) ![]const 
     return try file.reader().readAllAlloc(alloc, stat.size);
 }
 
+pub fn magnitude(num: i32) u32 {
+    if (num >= 0) {
+        return @intCast(num);
+    } else {
+        return @intCast(-num);
+    }
+}
+
 const expect = @import("std").testing.expect;
 
 test {
@@ -109,4 +117,10 @@ test "Test Diffing Numbers" {
     try expect(diffOfNumbers(5, 2) == 3);
     try expect(diffOfNumbers(26, 35) == 9);
     try expect(diffOfNumbers(5, 5) == 0);
+}
+
+test "Magnitude" {
+    try expect(magnitude(2) == 2);
+    try expect(magnitude(-2) == 2);
+    try expect(magnitude(-365) == 365);
 }
