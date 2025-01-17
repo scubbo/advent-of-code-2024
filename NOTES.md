@@ -206,3 +206,75 @@ fn accumulate() ![]u32 {
 ## What's the point in `HashMap.getOrPut`?
 
 `getOrPut` _doesn't_ actually `put` anything, it _only_ `get`s. See https://ziggit.dev/t/whats-the-point-in-hashmap-getorput/7547.
+
+---
+
+Draft text of Ziggit post - don't check this in!
+
+Sorry, folks, I'm still not getting it.
+
+Here's a much simpler example:
+
+```
+const std = @import("std");
+const print = std.debug.print;
+
+const expect = @import("std").testing.expect;
+
+const Value = struct {
+    inner_value: u32,
+
+    pub fn increment(self: *Value) void {
+        self.inner_value = Value{ .inner_value = self.inner_value + 1 };
+    }
+
+    pub fn from_line(line: []const u8) !Value {
+        return Value{ .inner_value = try std.fmt.parseInt(u32, line, 10) };
+    }
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    // Pretend that this string was being read from a file.
+    const input_data = "2\n10";
+
+    var it = std.mem.splitScalar(u8, input_data, '\n');
+    var values = std.ArrayList(Value).init(allocator);
+    defer values.deinit();
+
+    while (it.next()) |line| {
+        try values.append(try Value.from_line(line));
+    }
+
+    for (values.items) |value| {
+        value.increment();
+    }
+    print("{}\n", .{values.items[0].inner_value});
+    try expect(values.items[0].inner_value == 3);
+    try expect(values.items[1].inner_value == 11);
+}
+```
+([fiddle](https://zigfiddle.dev/?7tzC6Y6z1z0))
+
+This gives an error on the line `value.increment()`, with text `expected type '*<uuid>.Value', found *const <uuid>.Value'`. It looks like `from_line` is returning a `const` value, which thus has immutable fields. It seems to be illegal syntax to declare `from_line` as returning `var !Value`. If I instead try explicitly assigning the values to a `var` identifier:
+
+```
+...
+    while (it.next()) |line| {
+        var val = try Value.from_line(line);
+        try values.append(val);
+    }
+...
+```
+
+I get a syntax error `local variable is never mutated`.
+
+If I try making `from_line` return a pointer ([fiddle](https://zigfiddle.dev/?o9tAYWhelww)), I get an error that the return type of `from_line` is incorrect - `expected type '...!*<uuid>.Value', found '*const <uuid>.Value'`. But if I introduce an intermediate `var` variable ([fiddle](https://zigfiddle.dev/?AjhzH58JC-o)), a bunch of confusing stuff happens:
+* Firstly - the code actually runs. I don't understand why `var foo = <expression>; return &<expression>` would be any different than `return &<expression>`; and, moreover, why isn't _this_ complaining that a local variable isn't mutated? I never change `val` within the scope of `from_line`.
+* Secondly, the results are both unexpected and inconsistent:
+  * In ZigFiddle, I get a printed `12`, which is equal to neither `2+1` nor `10+1`. The `expect`s do _not_ fail.
+    * It _is_ equal to `10 + 1 + 1`, so _maybe_ the second `Value` was the one that got incremented both times? I can't see how that could be possible, though. And, when I tried adding a [third value](https://zigfiddle.dev/?0QGh6GrDLpQ), the result was `8`, so that theory doesn't hold water.
+  * On my own machine, I get the value `32761` printed, which is so far from either of those values that it makes me suspect I've somehow printed a bare pointer by mistake, but I can't see where I've done so if that's the case.
