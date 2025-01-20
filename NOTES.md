@@ -3,6 +3,7 @@ Notes, thoughts, or questions that arose as I implemented the solutions. Hopeful
 # Useful references
 
 * [Zig Notes](https://github.com/david-vanderson/zig-notes) - particularly on Arrays vs. Slices, and Strings.
+* I only discovered [this](https://kristoff.it/blog/advent-of-code-zig/) on Day 17 (which, because of my delayed-attempts, was actually Jan 19th).
 
 # Things I like
 
@@ -278,3 +279,16 @@ If I try making `from_line` return a pointer ([fiddle](https://zigfiddle.dev/?o9
   * In ZigFiddle, I get a printed `12`, which is equal to neither `2+1` nor `10+1`. The `expect`s do _not_ fail.
     * It _is_ equal to `10 + 1 + 1`, so _maybe_ the second `Value` was the one that got incremented both times? I can't see how that could be possible, though. And, when I tried adding a [third value](https://zigfiddle.dev/?0QGh6GrDLpQ), the result was `8`, so that theory doesn't hold water.
   * On my own machine, I get the value `32761` printed, which is so far from either of those values that it makes me suspect I've somehow printed a bare pointer by mistake, but I can't see where I've done so if that's the case.
+
+## Can't you change a slice's length?
+
+The following code gives an error:
+
+```zig
+pub fn main() void {
+    var mutable_slice = &[_]u32{ 0, 1, 2 };
+    mutable_slice = &[_]u32{ 4, 5, 6, 7 };
+}
+```
+
+Why?

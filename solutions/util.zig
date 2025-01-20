@@ -10,7 +10,7 @@ pub fn getInputFile(problemNumber: []const u8, isTestCase: bool) ![]u8 {
 
 // Technically this could be implemented as just repeated calls to `concatString`, but I _guess_ this is more efficient?
 // (I. Hate. Manual memory allocation)
-fn concatStrings(strings: []const []const u8) ![]u8 {
+pub fn concatStrings(strings: []const []const u8) ![]u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
@@ -27,7 +27,7 @@ fn concatStrings(strings: []const []const u8) ![]u8 {
     return combined;
 }
 
-fn concatString(a: []const u8, b: []const u8) ![]u8 {
+pub fn concatString(a: []const u8, b: []const u8) ![]u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     // I don't recall where the below came from, but it causes a `[gpa] (err): memory address 0x10383f000 leaked:` when
