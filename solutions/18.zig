@@ -155,15 +155,15 @@ fn buildMap(dimension: usize, allocator: std.mem.Allocator) [][]u8 {
     return map_list.toOwnedSlice() catch unreachable;
 }
 
-// test "partOne" {
-//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-//     defer _ = gpa.deinit();
-//     const allocator = gpa.allocator();
+test "partOne" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-//     const response = try partOne(true, true, allocator);
-//     print("Response is {}\n", .{response});
-//     try expect(response == 22);
-// }
+    const response = try partOne(true, true, allocator);
+    print("Response is {}\n", .{response});
+    try expect(response == 22);
+}
 
 // Outline of logic:
 // * (Without any bytes fallen) find the shortest path. Make sure you note the _path_, not just the length
