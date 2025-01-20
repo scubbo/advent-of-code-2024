@@ -93,6 +93,45 @@ pub fn magnitude(num: i32) u32 {
     }
 }
 
+// These are used in so many of these types of puzzles - I should have just implemented them at the start, rather than
+// so late in the challenge (Day 18 :P )
+// (Though, in my defence, I didn't know what datatype would be appropriate, and I was quite a long way from being able
+// to confidently use generics in Zig at that point)
+pub const Point = struct {
+    x: usize,
+    y: usize,
+    pub fn neighbours(self: *Point, width: usize, height: usize, allocator: std.mem.Allocator) []Point {
+        var response = std.ArrayList(Point).init(allocator);
+        if (self.x > 0) {
+            response.append(Point{ .x = self.x - 1, .y = self.y }) catch unreachable;
+        }
+        if (self.y > 0) {
+            response.append(Point{ .x = self.x, .y = self.y - 1 }) catch unreachable;
+        }
+        if (self.x < width - 1) {
+            response.append(Point{ .x = self.x + 1, .y = self.y }) catch unreachable;
+        }
+        if (self.y < height - 1) {
+            response.append(Point{ .x = self.x, .y = self.y + 1 }) catch unreachable;
+        }
+
+        return response.toOwnedSlice() catch unreachable;
+    }
+
+    pub fn format(self: Point, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.print("[{},{}]", .{ self.x, self.y });
+    }
+};
+
+pub fn log(comptime message: []const u8, args: anytype, debug: bool) void {
+    if (debug) {
+        std.debug.print(message, args);
+    }
+}
+
 const expect = @import("std").testing.expect;
 
 test {
