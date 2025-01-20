@@ -6,8 +6,10 @@ const expect = std.testing.expect;
 // Some memory leaks :shrug:
 
 pub fn main() !void {
-    const response = try part_one(false);
-    print("{any}\n", .{response});
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+    find_quine_value_of_a(&quine_program, allocator);
 }
 
 pub fn part_one(is_test_case: bool) ![]u64 {
@@ -252,4 +254,102 @@ test "part_one" {
     const response = try part_one(true);
     print("DEBUG - part_one response is {any}\n", .{response});
     try expect(std.mem.eql(u64, response, &.{ 4, 6, 3, 5, 6, 3, 5, 2, 1, 0 }));
+    // Memory leak here, but we can't free the response without passing an allocator into `part_one` itself 🙃
+}
+
+// Everything below here is for the quine investigation
+const quine_program = [_]u4{ 2, 4, 1, 1, 7, 5, 0, 3, 4, 3, 1, 6, 5, 5, 3, 0 };
+// Observe that the logic of the program is such that:
+// * a is (floor)-divided by 8 on each iteration
+// * the output at each stage is entirely determined by a (since b and c are)
+// * the value of a must be 0 for the last iteration through (in order for the `3,0` jnz command to terminate), and thus
+//   * the value of a must be <8 for the penultimate iteration
+//
+// So, instead of iterating through all possible values (which would take quite a while, as we'd need to examine values
+// between 8**15 and 8**16), we can iteratively:
+// * find the value of a that:
+//   * floor-divs by 8 to give the previously-found value of a
+//   * gives output of <the required digit output>
+//
+// This means that, at every stage of reconstruction (i.e. every digit of the quine_program in reverse), we only need to
+// check 8(asterisk...) candidates.
+//
+// This is complicated by the possibility that there might be multiple such values of a for a given stage, so we need to
+// keep track of all possible recursively-built sequences-of-digits, then find the smallest such once we have all
+// candidates. So in fact the value in the previous paragraph is 8*n, where n is "the number of candidates there were
+// for the previous stage". Still, though - way way fewer than if we were searching them all!
+
+fn find_output_value(a: u64) u4 {
+    const b = (a % 8) ^ 1;
+    const c = @divFloor(a, std.math.pow(u64, 2, b));
+    return @intCast(((b ^ c) ^ 6) % 8);
+}
+
+fn find_quine_value_of_a(p: []const u4, allocator: std.mem.Allocator) void {
+    var candidates = std.AutoHashMap(u64, bool).init(allocator);
+    var next_candidates = std.AutoHashMap(u64, bool).init(allocator);
+    candidates.put(0, true) catch unreachable;
+
+    var i: usize = 0;
+    while (i < p.len) : (i += 1) {
+        const desired_output = p[p.len - (i + 1)];
+        print("DEBUG - iteration {}, looking for desired output {}\n", .{ i, desired_output });
+        var cand_it = candidates.keyIterator();
+        while (cand_it.next()) |cand| {
+            const real_cand = cand.*;
+            print("DEBUG - candidate is {}\n", .{real_cand});
+            print("DEBUG - type of cand is {}\n", .{@TypeOf(real_cand)});
+            const lower_bound: u64 = real_cand * @as(u64, 8);
+            const upper_bound: u64 = (real_cand + 1) * @as(u64, 8);
+            print("DEBUG - lower_bound is {} and upper_bound is {}\n", .{ lower_bound, upper_bound });
+            for (lower_bound..upper_bound) |next_cand| {
+                if (find_output_value(next_cand) == desired_output) {
+                    print("DEBUG - {} gives desired output of {}\n", .{ next_cand, desired_output });
+                    next_candidates.put(next_cand, true) catch unreachable;
+                }
+            }
+        }
+        // Transfer next_candidates into candidates
+        var cand_it_for_transfer = candidates.keyIterator();
+        while (cand_it_for_transfer.next()) |k| {
+            _ = candidates.remove(k.*);
+        }
+        var next_cand_it = next_candidates.keyIterator();
+        while (next_cand_it.next()) |k| {
+            // Memory management is fucking insane.
+            // If I'd instead just done:
+            // ```
+            // _ = next_candidates.remove(k.*)
+            // candidates.put(k.*) catch unreachable;
+            // ```
+            // Then - presumably because `k` is a pointer rather than the actual value - the value put into candidates will be some entirely different value than the one retrieved from `next_candidates`
+            const actual_value = k.*;
+            print("DEBUG - found {} in next_candidates (to be removed)\n", .{actual_value});
+            _ = next_candidates.remove(actual_value);
+            print("DEBUG - transferring {} from next_candidates to candidates for the next iteration\n", .{actual_value});
+            candidates.put(actual_value, true) catch unreachable;
+        }
+    }
+
+    print("Finished processing - all candidates are: ", .{});
+    var lowest: u64 = 9999999999999999999;
+    var cand_it = candidates.keyIterator();
+    while (cand_it.next()) |c| {
+        print("{}, ", .{c.*});
+        if (c.* < lowest) {
+            lowest = c.*;
+        }
+    }
+    print("\n\nLowest is {}\n", .{lowest});
+}
+
+test "find_output_value" {
+    try expect(find_output_value(448) == 7);
+    try expect(find_output_value(449) == 7);
+    try expect(find_output_value(450) == 5);
+    try expect(find_output_value(451) == 4);
+    try expect(find_output_value(452) == 5);
+    try expect(find_output_value(453) == 6);
+    try expect(find_output_value(454) == 2);
+    try expect(find_output_value(455) == 7);
 }
