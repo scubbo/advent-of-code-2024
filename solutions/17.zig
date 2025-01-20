@@ -316,23 +316,13 @@ fn find_quine_value_of_a(p: []const u4, allocator: std.mem.Allocator) void {
         }
         var next_cand_it = next_candidates.keyIterator();
         while (next_cand_it.next()) |k| {
-            // Memory management is fucking insane.
-            // If I'd instead just done:
-            // ```
-            // _ = next_candidates.remove(k.*)
-            // candidates.put(k.*) catch unreachable;
-            // ```
-            // Then - presumably because `k` is a pointer rather than the actual value - the value put into candidates will be some entirely different value than the one retrieved from `next_candidates`
-            const actual_value = k.*;
-            print("DEBUG - found {} in next_candidates (to be removed)\n", .{actual_value});
-            _ = next_candidates.remove(actual_value);
-            print("DEBUG - transferring {} from next_candidates to candidates for the next iteration\n", .{actual_value});
-            candidates.put(actual_value, true) catch unreachable;
+            // Thanks to https://ziggit.dev/t/how-to-idiomatically-move-values-from-one-set-to-another-and-how-should-i-think-about-keyiterator-values-under-the-hood/8007/4?u=scubbo
+            candidates.put(next_candidates.fetchRemove(k).?.key, true) catch unreachable;
         }
     }
 
     print("Finished processing - all candidates are: ", .{});
-    var lowest: u64 = 9999999999999999999;
+    var lowest: u64 = 9999999999999999999; // `std.math.inf` leads to errors because of unreachable code
     var cand_it = candidates.keyIterator();
     while (cand_it.next()) |c| {
         print("{}, ", .{c.*});
