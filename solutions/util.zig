@@ -138,26 +138,33 @@ pub fn log(comptime message: []const u8, args: anytype, debug: bool) void {
 // Assumes that all links have cost 1.
 const DijkstraError = error{NoPathFound};
 
-// I hate that I have to pass in an allocator to `neighbours`, but it seems necessary in order to be able to free
-// whatever it returns.
-pub fn dijkstra(T: type, neighbours: *const fn (t: *T, allocator: std.mem.Allocator) []T, start: T, end: T, debug: bool, allocator: std.mem.Allocator) DijkstraError!u32 {
-    var visited = std.AutoHashMap(T, void).init(allocator);
+// Zig does not really support the passing-in of bare anonymous functions that depend on higher-level variables - you'll
+// get errors like `'<variable-name>' not accessible from inner function` or `crossing function boundary`.
+//
+// This appears to be a deliberate design decision to avoid unintentional use-after-free:
+// https://ziggit.dev/t/closure-in-zig/5449
+//
+// So, instead of passing in a nicely-encapsulated partial-application `getNeighbours` which _just_ takes a `node_type`, it needs to take in the data as well. Blech.
+//
+// (Check out the implementation at commit `d85d29` to see what it looked like before this change!)
+pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const data_type, getNeighbours: *const fn (d: *const data_type, n: *node_type, allocator: std.mem.Allocator) []node_type, start: node_type, end: node_type, debug: bool, allocator: std.mem.Allocator) DijkstraError!u32 {
+    var visited = std.AutoHashMap(node_type, void).init(allocator);
     defer visited.deinit();
 
-    var distances = std.AutoHashMap(T, u32).init(allocator);
+    var distances = std.AutoHashMap(node_type, u32).init(allocator);
     defer distances.deinit();
     distances.put(start, 0) catch unreachable;
 
     // Not strictly necessary - we could just iterate over all keys of `distances` and filter out those that are
     // `visited` - but this certainly trims down the unnecessary debug logging, and I have an intuition (though haven't
     // proved) that it'll slightly help performance.
-    var unvisited_candidates = std.AutoHashMap(T, void).init(allocator);
+    var unvisited_candidates = std.AutoHashMap(node_type, void).init(allocator);
     defer unvisited_candidates.deinit();
     unvisited_candidates.put(start, {}) catch unreachable;
 
     return while (true) {
         var cand_it = unvisited_candidates.keyIterator();
-        var curr: T = undefined;
+        var curr: node_type = undefined;
         var lowest_distance_found: u32 = std.math.maxInt(u32);
         while (cand_it.next()) |cand| {
             const actual_candidate = cand.*; // Necessary to avoid pointer weirdness
@@ -188,7 +195,7 @@ pub fn dijkstra(T: type, neighbours: *const fn (t: *T, allocator: std.mem.Alloca
 
         // Haven't terminated yet => we're still looking. Check neighbours, and update their min-distance
         const distance_of_neighbour_from_current = lowest_distance_found + 1;
-        const neighbours_of_curr = neighbours(&curr, allocator);
+        const neighbours_of_curr = getNeighbours(data, &curr, allocator);
         for (neighbours_of_curr) |neighbour| {
             if (visited.contains(neighbour)) {
                 continue;
@@ -213,35 +220,13 @@ pub fn dijkstra(T: type, neighbours: *const fn (t: *T, allocator: std.mem.Alloca
     };
 }
 
-// I tried declaring this within the `test "Dijkstra`", but this method of anonymous functions:
-// https://gencmurat.com/en/posts/zig-anonymus-functions-and-closures/
-// didn't work for me when trying to pass an Allocator down inside. The following attempt:
-//
-// ```
-//    const curry = struct {
-//        pub fn call(T: type, alloc: std.mem.Allocator) *const fn (t: T) []T {
-//            const Context = struct { alloc: std.mem.Allocator };
-//
-//            const context = Context{ .alloc = alloc };
-//
-//            return struct {
-//                pub fn call(p: Point) []Point {
-//                    const response = std.ArrayList(Point).init(context.alloc);
-//                    for (p.neighbours(15, 15, context.alloc)) |n| {
-//                        if (data[16 * n.y + n.x] == '.') {
-//                            response.append(n) catch unreachable;
-//                        }
-//                    }
-//                    return response.toOwnedSlice() catch unreachable;
-//                }
-//            }.call;
-//        }
-//    }.call;
-// ```
-// gave `'context' not accessible from inner function`
-fn private_dijkstra_test_neighbours_function(p: *Point, allocator: std.mem.Allocator) []Point {
+test "Dijkstra" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     // From AoC 2024 Day 20
-    const data =
+    const base_data =
         \\###############
         \\#...#...#.....#
         \\#.#.#.#.#.###.#
@@ -258,27 +243,33 @@ fn private_dijkstra_test_neighbours_function(p: *Point, allocator: std.mem.Alloc
         \\#...#...#...###
         \\###############
     ;
-
-    var response = std.ArrayList(Point).init(allocator);
-    const ns = p.neighbours(15, 15, allocator);
-    for (ns) |n| {
-        if (data[16 * n.y + n.x] == '.') {
-            response.append(n) catch unreachable;
-        }
+    // This is absolutely fucking ridiculous - but I can't find a way to create a `*const []u8` from the above
+    // `*const [N:0]u8`.
+    // In particular, `std.mem.span` doesn't work, contra https://stackoverflow.com/a/72975237
+    var data_list = std.ArrayList(u8).init(allocator);
+    for (base_data) |c| {
+        data_list.append(c) catch unreachable;
     }
-    allocator.free(ns);
-    return response.toOwnedSlice() catch unreachable;
-}
-
-test "Dijkstra" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
+    const data = data_list.toOwnedSlice() catch unreachable;
+    defer allocator.free(data);
     const start = Point{ .x = 1, .y = 3 };
     const end = Point{ .x = 5, .y = 7 };
 
-    const result = dijkstra(Point, private_dijkstra_test_neighbours_function, start, end, false, allocator) catch unreachable;
+    const neighboursFunc = &struct {
+        pub fn func(d: *const []u8, point: *Point, alloc: std.mem.Allocator) []Point {
+            var response = std.ArrayList(Point).init(alloc);
+            const ns = point.neighbours(15, 15, alloc);
+            for (ns) |n| {
+                if (d.*[16 * n.y + n.x] == '.') {
+                    response.append(n) catch unreachable;
+                }
+            }
+            alloc.free(ns);
+            return response.toOwnedSlice() catch unreachable;
+        }
+    }.func;
+
+    const result = dijkstra([]u8, Point, &data, neighboursFunc, start, end, false, allocator) catch unreachable;
     // print("Dijkstra result is {}\n", .{result});
     try expect(result == 84);
 }
