@@ -3,6 +3,8 @@
 // and that seems awful.
 
 const std = @import("std");
+const print = std.debug.print;
+const expect = @import("std").testing.expect;
 
 pub fn getInputFile(problemNumber: []const u8, isTestCase: bool) ![]u8 {
     return concatString("inputs/", try concatString(problemNumber, try concatString("/", try concatString(if (isTestCase) "test" else "real", ".txt"))));
@@ -132,7 +134,154 @@ pub fn log(comptime message: []const u8, args: anytype, debug: bool) void {
     }
 }
 
-const expect = @import("std").testing.expect;
+// Basic implementation of Dijkstra - given start and end, find the length of the shortest path that joins them.
+// Assumes that all links have cost 1.
+const DijkstraError = error{NoPathFound};
+
+// I hate that I have to pass in an allocator to `neighbours`, but it seems necessary in order to be able to free
+// whatever it returns.
+pub fn dijkstra(T: type, neighbours: *const fn (t: *T, allocator: std.mem.Allocator) []T, start: T, end: T, debug: bool, allocator: std.mem.Allocator) DijkstraError!u32 {
+    var visited = std.AutoHashMap(T, void).init(allocator);
+    defer visited.deinit();
+
+    var distances = std.AutoHashMap(T, u32).init(allocator);
+    defer distances.deinit();
+    distances.put(start, 0) catch unreachable;
+
+    // Not strictly necessary - we could just iterate over all keys of `distances` and filter out those that are
+    // `visited` - but this certainly trims down the unnecessary debug logging, and I have an intuition (though haven't
+    // proved) that it'll slightly help performance.
+    var unvisited_candidates = std.AutoHashMap(T, void).init(allocator);
+    defer unvisited_candidates.deinit();
+    unvisited_candidates.put(start, {}) catch unreachable;
+
+    return while (true) {
+        var cand_it = unvisited_candidates.keyIterator();
+        var curr: T = undefined;
+        var lowest_distance_found: u32 = std.math.maxInt(u32);
+        while (cand_it.next()) |cand| {
+            const actual_candidate = cand.*; // Necessary to avoid pointer weirdness
+            log("Considering {s} as the next curr ", .{actual_candidate}, debug);
+
+            const distance_of_candidate = distances.get(actual_candidate) orelse std.math.maxInt(u32);
+            if (distance_of_candidate < lowest_distance_found) {
+                log("and it is a possibility!\n", .{}, debug);
+                curr = actual_candidate;
+                lowest_distance_found = distance_of_candidate;
+            } else {
+                log("but rejecting it because it already has a shorter minimum-distance({} vs {})\n", .{ distance_of_candidate, lowest_distance_found }, debug);
+            }
+        }
+
+        if (lowest_distance_found == std.math.maxInt(u32)) {
+            log("ERROR - iterated over all candidates, but found none with non-infinite distance", .{}, debug);
+            break DijkstraError.NoPathFound;
+        }
+        log("Settled on {s} as the new curr", .{curr}, debug);
+
+        if (std.meta.eql(curr, end)) {
+            log(" and that is the target, so we're done!\n", .{}, debug);
+            break lowest_distance_found;
+        } else {
+            log(" - now exploring its neighbours\n", .{}, debug);
+        }
+
+        // Haven't terminated yet => we're still looking. Check neighbours, and update their min-distance
+        const distance_of_neighbour_from_current = lowest_distance_found + 1;
+        const neighbours_of_curr = neighbours(&curr, allocator);
+        for (neighbours_of_curr) |neighbour| {
+            if (visited.contains(neighbour)) {
+                continue;
+            }
+
+            const distance_response = distances.getOrPut(neighbour) catch unreachable;
+            if (!distance_response.found_existing) {
+                log("Adding a new (first) distance to {s} (via {s}) - {}\n", .{ neighbour, curr, distance_of_neighbour_from_current }, debug);
+                distance_response.value_ptr.* = distance_of_neighbour_from_current;
+                unvisited_candidates.put(neighbour, {}) catch unreachable;
+            } else {
+                if (distance_response.value_ptr.* > distance_of_neighbour_from_current) {
+                    log("Overriding distance for neighbour {s} because distance of path from {s} ({}) is less than current value ({})\n", .{ neighbour, curr, distance_of_neighbour_from_current, distance_response.value_ptr.* }, debug);
+                    distance_response.value_ptr.* = distance_of_neighbour_from_current;
+                }
+            }
+        }
+        allocator.free(neighbours_of_curr);
+        visited.put(curr, {}) catch unreachable;
+        _ = unvisited_candidates.remove(curr);
+        log("{s} has now been fully visited - loop begins again\n", .{curr}, debug);
+    };
+}
+
+// I tried declaring this within the `test "Dijkstra`", but this method of anonymous functions:
+// https://gencmurat.com/en/posts/zig-anonymus-functions-and-closures/
+// didn't work for me when trying to pass an Allocator down inside. The following attempt:
+//
+// ```
+//    const curry = struct {
+//        pub fn call(T: type, alloc: std.mem.Allocator) *const fn (t: T) []T {
+//            const Context = struct { alloc: std.mem.Allocator };
+//
+//            const context = Context{ .alloc = alloc };
+//
+//            return struct {
+//                pub fn call(p: Point) []Point {
+//                    const response = std.ArrayList(Point).init(context.alloc);
+//                    for (p.neighbours(15, 15, context.alloc)) |n| {
+//                        if (data[16 * n.y + n.x] == '.') {
+//                            response.append(n) catch unreachable;
+//                        }
+//                    }
+//                    return response.toOwnedSlice() catch unreachable;
+//                }
+//            }.call;
+//        }
+//    }.call;
+// ```
+// gave `'context' not accessible from inner function`
+fn private_dijkstra_test_neighbours_function(p: *Point, allocator: std.mem.Allocator) []Point {
+    // From AoC 2024 Day 20
+    const data =
+        \\###############
+        \\#...#...#.....#
+        \\#.#.#.#.#.###.#
+        \\#.#...#.#.#...#
+        \\#######.#.#.###
+        \\#######.#.#...#
+        \\#######.#.###.#
+        \\###...#...#...#
+        \\###.#######.###
+        \\#...###...#...#
+        \\#.#####.#.###.#
+        \\#.#...#.#.#...#
+        \\#.#.#.#.#.#.###
+        \\#...#...#...###
+        \\###############
+    ;
+
+    var response = std.ArrayList(Point).init(allocator);
+    const ns = p.neighbours(15, 15, allocator);
+    for (ns) |n| {
+        if (data[16 * n.y + n.x] == '.') {
+            response.append(n) catch unreachable;
+        }
+    }
+    allocator.free(ns);
+    return response.toOwnedSlice() catch unreachable;
+}
+
+test "Dijkstra" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const start = Point{ .x = 1, .y = 3 };
+    const end = Point{ .x = 5, .y = 7 };
+
+    const result = dijkstra(Point, private_dijkstra_test_neighbours_function, start, end, false, allocator) catch unreachable;
+    // print("Dijkstra result is {}\n", .{result});
+    try expect(result == 84);
+}
 
 test {
     const result = try concatString("abc", "def");
