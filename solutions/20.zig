@@ -21,9 +21,6 @@ pub fn main() !void {
 // * Find all cheats
 // * For each cheat:
 //   * Time saved is basic time - (time-from-start-to-start-of-cheat - time-from-end-of-cheat-to-end)
-//
-// Implementation is not yet complete! So far I've only implemented the first bullet, because building a generic
-// implementation of Dijkstra's was an _ARSE_ - the rest can happen tomorrow!
 fn partOne(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
     const input_file = try util.getInputFile("20", is_test_case);
     const data = try util.readAllInputWithAllocator(input_file, allocator);
@@ -67,10 +64,10 @@ fn partOne(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
     defer distances_map_from_end.deinit();
 
     const shortest_non_cheating_path = distances_map.get(end_point).?;
-    const cheats = findAllPossibleCheats(map, allocator);
-    defer allocator.free(cheats);
+    var cheats = findCheatsWithMaximumLength(map, 2, allocator);
+    defer cheats.deinit();
 
-    var scored_cheats = scoreCheats(cheats, shortest_non_cheating_path, distances_map, distances_map_from_end, debug, allocator);
+    var scored_cheats = scoreCheatsWithVariableLength(cheats, shortest_non_cheating_path, distances_map, distances_map_from_end, debug, allocator);
     defer scored_cheats.deinit();
 
     var total: u32 = 0;
@@ -139,61 +136,6 @@ fn findPoint(data: [][]u8, char: u8) Point {
         }
     }
     unreachable;
-}
-
-fn findAllPossibleCheats(data: [][]u8, allocator: std.mem.Allocator) []Cheat {
-    var set = std.AutoHashMap(Cheat, void).init(allocator);
-    defer set.deinit();
-
-    for (data, 0..) |line, y| {
-        for (line, 0..) |c, x| {
-            var shouldPrintDebugStatements = false;
-            if (y == 7 and x == 7) {
-                shouldPrintDebugStatements = true;
-            }
-            log("In 7/7 case\n", .{}, shouldPrintDebugStatements);
-            if (c != '.') {
-                continue;
-            }
-
-            if (x + 2 < data[0].len and data[y][x + 2] == '.') {
-                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x + 2, .y = y } }, {}) catch unreachable;
-            }
-            if (x >= 2 and data[y][x - 2] == '.') {
-                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x - 2, .y = y } }, {}) catch unreachable;
-            } else {}
-            if (y + 2 < data.len and data[y + 2][x] == '.') {
-                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x, .y = y + 2 } }, {}) catch unreachable;
-            }
-            if (y >= 2 and data[y - 2][x] == '.') {
-                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x, .y = y - 2 } }, {}) catch unreachable;
-            }
-        }
-    }
-
-    var output = std.ArrayList(Cheat).init(allocator);
-    var set_iter = set.keyIterator();
-    while (set_iter.next()) |p| {
-        output.append(p.*) catch unreachable;
-    }
-    return output.toOwnedSlice() catch unreachable;
-}
-
-fn scoreCheats(cheats: []Cheat, base_lowest_time: u32, distances_from_start: std.AutoHashMap(Point, u32), distances_from_end: std.AutoHashMap(Point, u32), debug: bool, allocator: std.mem.Allocator) std.AutoHashMap(Cheat, i64) {
-    var output = std.AutoHashMap(Cheat, i64).init(allocator);
-    for (cheats) |cheat| {
-        output.put(cheat, scoreCheat(cheat, base_lowest_time, distances_from_start, distances_from_end, debug)) catch unreachable;
-    }
-    return output;
-}
-
-// Note - `i64`, rather than `u32`, because a cheat might make the time _longer_!
-fn scoreCheat(cheat: Cheat, base_lowest_time: u32, distances_from_start: std.AutoHashMap(Point, u32), distances_from_end: std.AutoHashMap(Point, u32), debug: bool) i64 {
-    const distance_from_start = distances_from_start.get(cheat.start).?;
-    const distance_from_end = distances_from_end.get(cheat.end).?;
-    const total_time_with_cheat = distance_from_start + distance_from_end + 2;
-    log("DEBUG - total_time_with_cheat for {s} is {} - based on {} and {}\n", .{ cheat, total_time_with_cheat, distance_from_start, distance_from_end }, debug);
-    return @as(i64, base_lowest_time) - @as(i64, total_time_with_cheat);
 }
 
 test "partOne" {
