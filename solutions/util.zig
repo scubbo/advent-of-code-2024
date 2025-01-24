@@ -274,7 +274,7 @@ test "Dijkstra" {
     var result = dijkstra([]u8, Point, &data, neighboursFunc, start, end, false, allocator);
     defer result.deinit();
     const distance = result.get(end).?;
-    print("Dijkstra result is {}\n", .{distance});
+    // print("Dijkstra result is {}\n", .{distance});
     try expect(distance == 84);
 }
 
