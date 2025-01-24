@@ -10,7 +10,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const response = try partOne(false, false, allocator);
+    const response = try partTwo(false, false, allocator);
     print("{}\n", .{response});
 }
 
@@ -29,7 +29,7 @@ fn partOne(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
     const data = try util.readAllInputWithAllocator(input_file, allocator);
     defer allocator.free(data);
 
-    const map = buildMap(data, allocator);
+    var map = buildMap(data, allocator);
     defer allocator.free(map);
     defer {
         for (map) |line| {
@@ -41,6 +41,9 @@ fn partOne(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
     // functions to do one-and-only-one thing.
     const start_point = findPoint(map, 'S');
     const end_point = findPoint(map, 'E');
+    // Cleanup the map so that cheats-to-the-end will still be legal
+    map[end_point.y][end_point.x] = '.';
+    map[start_point.y][start_point.x] = '.';
     log("Start point is {s} and end point is {s}\n", .{ start_point, end_point }, debug);
 
     const neighboursFunc = &struct {
@@ -57,9 +60,45 @@ fn partOne(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
         }
     }.func;
 
-    const shortestPathLength = util.dijkstra([][]u8, Point, &map, neighboursFunc, start_point, end_point, debug, allocator) catch unreachable;
-    return shortestPathLength;
+    var distances_map = util.dijkstra([][]u8, Point, &map, neighboursFunc, start_point, null, debug, allocator);
+    defer distances_map.deinit();
+
+    var distances_map_from_end = util.dijkstra([][]u8, Point, &map, neighboursFunc, end_point, null, debug, allocator);
+    defer distances_map_from_end.deinit();
+
+    const shortest_non_cheating_path = distances_map.get(end_point).?;
+    const cheats = findAllPossibleCheats(map, allocator);
+    defer allocator.free(cheats);
+
+    var scored_cheats = scoreCheats(cheats, shortest_non_cheating_path, distances_map, distances_map_from_end, debug, allocator);
+    defer scored_cheats.deinit();
+
+    var total: u32 = 0;
+    var it = scored_cheats.iterator();
+    const target_speedup: u8 = if (is_test_case) 12 else 100;
+    log("Here are the scored cheats:\n", .{}, debug);
+    while (it.next()) |e| {
+        if (e.value_ptr.* >= target_speedup) {
+            total += 1;
+        }
+        if (e.value_ptr.* > 0) {
+            log("{}: {}\n", .{ e.key_ptr.*, e.value_ptr.* }, debug);
+        }
+    }
+
+    return total;
 }
+
+const Cheat = struct {
+    start: Point,
+    end: Point,
+    pub fn format(self: Cheat, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+
+        try writer.print("[{s},{s}]", .{ self.start, self.end });
+    }
+};
 
 fn buildNeighboursFunction(map: *const [][]u8) *const fn (p: *Point, alloc: std.mem.Allocator) []Point {
     return struct {
@@ -102,12 +141,187 @@ fn findPoint(data: [][]u8, char: u8) Point {
     unreachable;
 }
 
+fn findAllPossibleCheats(data: [][]u8, allocator: std.mem.Allocator) []Cheat {
+    var set = std.AutoHashMap(Cheat, void).init(allocator);
+    defer set.deinit();
+
+    for (data, 0..) |line, y| {
+        for (line, 0..) |c, x| {
+            var shouldPrintDebugStatements = false;
+            if (y == 7 and x == 7) {
+                shouldPrintDebugStatements = true;
+            }
+            log("In 7/7 case\n", .{}, shouldPrintDebugStatements);
+            if (c != '.') {
+                continue;
+            }
+
+            if (x + 2 < data[0].len and data[y][x + 2] == '.') {
+                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x + 2, .y = y } }, {}) catch unreachable;
+            }
+            if (x >= 2 and data[y][x - 2] == '.') {
+                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x - 2, .y = y } }, {}) catch unreachable;
+            } else {}
+            if (y + 2 < data.len and data[y + 2][x] == '.') {
+                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x, .y = y + 2 } }, {}) catch unreachable;
+            }
+            if (y >= 2 and data[y - 2][x] == '.') {
+                set.put(Cheat{ .start = Point{ .x = x, .y = y }, .end = Point{ .x = x, .y = y - 2 } }, {}) catch unreachable;
+            }
+        }
+    }
+
+    var output = std.ArrayList(Cheat).init(allocator);
+    var set_iter = set.keyIterator();
+    while (set_iter.next()) |p| {
+        output.append(p.*) catch unreachable;
+    }
+    return output.toOwnedSlice() catch unreachable;
+}
+
+fn scoreCheats(cheats: []Cheat, base_lowest_time: u32, distances_from_start: std.AutoHashMap(Point, u32), distances_from_end: std.AutoHashMap(Point, u32), debug: bool, allocator: std.mem.Allocator) std.AutoHashMap(Cheat, i64) {
+    var output = std.AutoHashMap(Cheat, i64).init(allocator);
+    for (cheats) |cheat| {
+        output.put(cheat, scoreCheat(cheat, base_lowest_time, distances_from_start, distances_from_end, debug)) catch unreachable;
+    }
+    return output;
+}
+
+// Note - `i64`, rather than `u32`, because a cheat might make the time _longer_!
+fn scoreCheat(cheat: Cheat, base_lowest_time: u32, distances_from_start: std.AutoHashMap(Point, u32), distances_from_end: std.AutoHashMap(Point, u32), debug: bool) i64 {
+    const distance_from_start = distances_from_start.get(cheat.start).?;
+    const distance_from_end = distances_from_end.get(cheat.end).?;
+    const total_time_with_cheat = distance_from_start + distance_from_end + 2;
+    log("DEBUG - total_time_with_cheat for {s} is {} - based on {} and {}\n", .{ cheat, total_time_with_cheat, distance_from_start, distance_from_end }, debug);
+    return @as(i64, base_lowest_time) - @as(i64, total_time_with_cheat);
+}
+
 test "partOne" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     const response = try partOne(true, true, allocator);
-    print("{}\n", .{response});
-    try expect(response == 84);
+    print("Found {} sufficiently-speedy cheats for partOne\n", .{response});
+    try expect(response == 8);
+}
+
+fn partTwo(is_test_case: bool, debug: bool, allocator: std.mem.Allocator) !u32 {
+    const input_file = try util.getInputFile("20", is_test_case);
+    const data = try util.readAllInputWithAllocator(input_file, allocator);
+    defer allocator.free(data);
+
+    var map = buildMap(data, allocator);
+    defer allocator.free(map);
+    defer {
+        for (map) |line| {
+            allocator.free(line);
+        }
+    }
+
+    // Technically slightly inefficient to do it this way, as we could have done it during `buildMap`, but I prefer my
+    // functions to do one-and-only-one thing.
+    const start_point = findPoint(map, 'S');
+    const end_point = findPoint(map, 'E');
+    // Cleanup the map so that cheats-to-the-end will still be legal
+    map[end_point.y][end_point.x] = '.';
+    map[start_point.y][start_point.x] = '.';
+    log("Start point is {s} and end point is {s}\n", .{ start_point, end_point }, debug);
+
+    const neighboursFunc = &struct {
+        pub fn func(d: *const [][]u8, point: *Point, alloc: std.mem.Allocator) []Point {
+            var response = std.ArrayList(Point).init(alloc);
+            const ns = point.neighbours(d.*[0].len, d.len, alloc);
+            for (ns) |n| {
+                if (d.*[n.y][n.x] != '#') {
+                    response.append(n) catch unreachable;
+                }
+            }
+            alloc.free(ns);
+            return response.toOwnedSlice() catch unreachable;
+        }
+    }.func;
+
+    var distances_map = util.dijkstra([][]u8, Point, &map, neighboursFunc, start_point, null, debug, allocator);
+    defer distances_map.deinit();
+
+    var distances_map_from_end = util.dijkstra([][]u8, Point, &map, neighboursFunc, end_point, null, debug, allocator);
+    defer distances_map_from_end.deinit();
+
+    const shortest_non_cheating_path = distances_map.get(end_point).?;
+    var cheats = findCheatsWithMaximumLength(map, 20, allocator);
+    defer cheats.deinit();
+
+    var scored_cheats = scoreCheatsWithVariableLength(cheats, shortest_non_cheating_path, distances_map, distances_map_from_end, debug, allocator);
+    defer scored_cheats.deinit();
+
+    var total: u32 = 0;
+    var it = scored_cheats.iterator();
+    const target_speedup: u8 = if (is_test_case) 66 else 100;
+    log("Here are the scored cheats:\n", .{}, debug);
+    while (it.next()) |e| {
+        if (e.value_ptr.* >= target_speedup) {
+            total += 1;
+        }
+        if (e.value_ptr.* > 0) {
+            log("{}: {}\n", .{ e.key_ptr.*, e.value_ptr.* }, debug);
+        }
+    }
+
+    return total;
+}
+
+fn findCheatsWithMaximumLength(map: [][]u8, maximum_length: u32, allocator: std.mem.Allocator) std.AutoHashMap(Cheat, u64) {
+    var output = std.AutoHashMap(Cheat, u64).init(allocator);
+    // Just realized - after running this - that I could probably speed this up by only iterating over the Points that are in the distance maps,
+    // since those are the only valid (non-wall) spaces. Eh - still only took a coupla seconds. Could add that optimization if it mattered!
+    for (map, 0..) |start_line, start_y| {
+        for (start_line, 0..) |start_c, start_x| {
+            for (map, 0..) |end_line, end_y| {
+                for (end_line, 0..) |end_c, end_x| {
+                    if (start_c == '.' and end_c == '.') {
+                        const cheat = Cheat{ .start = Point{ .x = start_x, .y = start_y }, .end = Point{ .x = end_x, .y = end_y } };
+                        const length_of_cheat = findLengthOfCheat(cheat);
+                        if (length_of_cheat <= maximum_length) {
+                            output.put(cheat, length_of_cheat) catch unreachable;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return output;
+}
+
+fn findLengthOfCheat(cheat: Cheat) u64 {
+    return @as(u64, (if (cheat.start.x > cheat.end.x) cheat.start.x - cheat.end.x else cheat.end.x - cheat.start.x) + (if (cheat.start.y > cheat.end.y) cheat.start.y - cheat.end.y else cheat.end.y - cheat.start.y));
+}
+
+fn scoreCheatsWithVariableLength(cheats: std.AutoHashMap(Cheat, u64), shortest_non_cheating_path: u32, distances_map: std.AutoHashMap(Point, u32), distances_map_from_end: std.AutoHashMap(Point, u32), debug: bool, allocator: std.mem.Allocator) std.AutoHashMap(Cheat, i128) {
+    var output = std.AutoHashMap(Cheat, i128).init(allocator);
+    var e_it = cheats.iterator();
+    while (e_it.next()) |e| {
+        output.put(e.key_ptr.*, scoreCheatWithVariableLength(e.key_ptr.*, e.value_ptr.*, shortest_non_cheating_path, distances_map, distances_map_from_end, debug)) catch unreachable;
+    }
+    return output;
+}
+
+// Note - `i128`, rather than `u32`, because a cheat might make the time _longer_!
+// (And we can't use i64 because the variable cheat-length is a usize, which is u64, so...:shrug:
+fn scoreCheatWithVariableLength(cheat: Cheat, cheat_length: u64, base_lowest_time: u32, distances_from_start: std.AutoHashMap(Point, u32), distances_from_end: std.AutoHashMap(Point, u32), debug: bool) i128 {
+    const distance_from_start = distances_from_start.get(cheat.start).?;
+    const distance_from_end = distances_from_end.get(cheat.end).?;
+    const total_time_with_cheat = distance_from_start + distance_from_end + cheat_length;
+    log("DEBUG - total_time_with_cheat for {s} is {} - based on {} and {}\n", .{ cheat, total_time_with_cheat, distance_from_start, distance_from_end }, debug);
+    return @as(i128, base_lowest_time) - @as(i128, total_time_with_cheat);
+}
+
+test "partTwo" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const response = try partTwo(true, true, allocator);
+    print("Found {} sufficiently-speedy cheats for partTwo\n", .{response});
+    try expect(response == 67);
 }

@@ -134,10 +134,11 @@ pub fn log(comptime message: []const u8, args: anytype, debug: bool) void {
     }
 }
 
-// Basic implementation of Dijkstra - given start and end, find the length of the shortest path that joins them.
+// Basic implementation of Dijkstra - given start and end, explore until a shortest path is found to `end`.
 // Assumes that all links have cost 1.
-const DijkstraError = error{NoPathFound};
-
+// Returns distances rather than the length of the path because that's often useful. In particular, pass `null` as `end`
+// to get minimum distances from `start` to _every_ node.
+//
 // Zig does not really support the passing-in of bare anonymous functions that depend on higher-level variables - you'll
 // get errors like `'<variable-name>' not accessible from inner function` or `crossing function boundary`.
 //
@@ -147,12 +148,11 @@ const DijkstraError = error{NoPathFound};
 // So, instead of passing in a nicely-encapsulated partial-application `getNeighbours` which _just_ takes a `node_type`, it needs to take in the data as well. Blech.
 //
 // (Check out the implementation at commit `d85d29` to see what it looked like before this change!)
-pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const data_type, getNeighbours: *const fn (d: *const data_type, n: *node_type, allocator: std.mem.Allocator) []node_type, start: node_type, end: node_type, debug: bool, allocator: std.mem.Allocator) DijkstraError!u32 {
+pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const data_type, getNeighbours: *const fn (d: *const data_type, n: *node_type, allocator: std.mem.Allocator) []node_type, start: node_type, end: ?node_type, debug: bool, allocator: std.mem.Allocator) std.AutoHashMap(node_type, u32) {
     var visited = std.AutoHashMap(node_type, void).init(allocator);
     defer visited.deinit();
 
     var distances = std.AutoHashMap(node_type, u32).init(allocator);
-    defer distances.deinit();
     distances.put(start, 0) catch unreachable;
 
     // Not strictly necessary - we could just iterate over all keys of `distances` and filter out those that are
@@ -162,7 +162,7 @@ pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const
     defer unvisited_candidates.deinit();
     unvisited_candidates.put(start, {}) catch unreachable;
 
-    return while (true) {
+    while (true) {
         var cand_it = unvisited_candidates.keyIterator();
         var curr: node_type = undefined;
         var lowest_distance_found: u32 = std.math.maxInt(u32);
@@ -181,14 +181,14 @@ pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const
         }
 
         if (lowest_distance_found == std.math.maxInt(u32)) {
-            log("ERROR - iterated over all candidates, but found none with non-infinite distance", .{}, debug);
-            break DijkstraError.NoPathFound;
+            log("Iterated over all candidates, but found none with non-infinite distance\n", .{}, debug);
+            break;
         }
         log("Settled on {s} as the new curr", .{curr}, debug);
 
-        if (std.meta.eql(curr, end)) {
+        if (end != null and std.meta.eql(curr, end.?)) {
             log(" and that is the target, so we're done!\n", .{}, debug);
-            break lowest_distance_found;
+            break;
         } else {
             log(" - now exploring its neighbours\n", .{}, debug);
         }
@@ -217,7 +217,9 @@ pub fn dijkstra(comptime data_type: type, comptime node_type: type, data: *const
         visited.put(curr, {}) catch unreachable;
         _ = unvisited_candidates.remove(curr);
         log("{s} has now been fully visited - loop begins again\n", .{curr}, debug);
-    };
+    }
+
+    return distances;
 }
 
 test "Dijkstra" {
@@ -269,9 +271,11 @@ test "Dijkstra" {
         }
     }.func;
 
-    const result = dijkstra([]u8, Point, &data, neighboursFunc, start, end, false, allocator) catch unreachable;
-    // print("Dijkstra result is {}\n", .{result});
-    try expect(result == 84);
+    var result = dijkstra([]u8, Point, &data, neighboursFunc, start, end, false, allocator);
+    defer result.deinit();
+    const distance = result.get(end).?;
+    print("Dijkstra result is {}\n", .{distance});
+    try expect(distance == 84);
 }
 
 test {
