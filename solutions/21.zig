@@ -3,8 +3,169 @@ const util = @import("util.zig");
 const Point = util.Point;
 const expect = std.testing.expect;
 
-fn shortestDirectionalPushesToEnterNumericSequence(numericSequence: []const u8, allocator: std.mem.Allocator) []const []const u8 {
+// Logic (after going down a rabbithole in `21_abandoned` that ended up having impractical runtime complexity):
+// * Prefer moves that include doubles (because those will lead to shorter sequences on the "next level" because "A" can
+// be pushed twice)
+// * Other than that, picking moves is arbitrary - in particular, any moves on the numeric keypad can only ever have two
+// directions (and they must be orthogonal to one another), which on the next-level directional keypad can only ever
+// lead to the same amount of doubles no matter how they are arranged (e.g. `<<^^` will lead to the same number of
+// doubles on the next-level keypad as `^^<<`)
+// (I'd gotten all of that by myself, but was puzzled by one failing test case. I gave up and checked the internet
+// for inspiration, and https://old.reddit.com/r/adventofcode/comments/1hj2odw/2024_day_21_solutions/m6qcv0f/ and
+// https://old.reddit.com/r/adventofcode/comments/1hjgyps/2024_day_21_part_2_i_got_greedyish/ helped me realize that, in
+// fact, moves _cannot_ be chosen arbitrarily because the lengths of resultant sequences _do_ diverge after repeated
+// processing. Except where we have to pick moves to avoid the voids, we should always do moves in this order, <v^>)
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const strings = allocator.dupe([]const u8, &.{ "671A", "826A", "670A", "085A", "283A" }) catch unreachable;
+    var total: u32 = 0;
+    for (strings) |string| {
+        total += findComplexityOfCode(string, allocator);
+    }
+    std.debug.print("Solution is {}\n", .{total});
+}
+
+fn findComplexityOfCode(code: []const u8, allocator: std.mem.Allocator) u32 {
+    const length_of_sequence: u32 = @intCast(findLengthOfShortestResultOfLoopingNTimes(code, 3, allocator));
+    const numeric_part = std.fmt.parseInt(u32, code[0 .. code.len - 1], 10) catch unreachable;
+    return length_of_sequence * numeric_part;
+}
+
+fn findLengthOfShortestResultOfLoopingNTimes(originalNumericSequence: []const u8, times: usize, allocator: std.mem.Allocator) usize {
+    const sequence = shortestDirectionalPushToEnterNumericSequence(originalNumericSequence, allocator);
+    // defer allocator.free(sequence);
+
+    var cur_sequences = std.StringHashMap(void).init(allocator);
+    defer cur_sequences.deinit();
+    cur_sequences.put(sequence, {}) catch unreachable;
+
+    var next_sequences = std.StringHashMap(void).init(allocator);
+    defer next_sequences.deinit();
+
+    for (0..times - 1) |i| {
+        std.debug.print("\nLooping for the {}-th time\n", .{i});
+        var cur_it = cur_sequences.keyIterator();
+        while (cur_it.next()) |n| {
+            const next_level_entry = shortestDirectionalPushToEnterDirectionalSequence(n.*, allocator);
+            next_sequences.put(next_level_entry, {}) catch unreachable;
+        }
+
+        cur_sequences.clearRetainingCapacity();
+        var next_it = next_sequences.keyIterator();
+        while (next_it.next()) |n| {
+            cur_sequences.put(n.*, {}) catch unreachable;
+        }
+        next_sequences.clearRetainingCapacity();
+    }
+
+    var shortest_so_far: usize = std.math.maxInt(u32);
+    var cur_it = cur_sequences.keyIterator();
+    while (cur_it.next()) |c| {
+        shortest_so_far = @min(c.*.len, shortest_so_far);
+    }
+    return shortest_so_far;
+}
+
+fn shortestDirectionalPushToEnterDirectionalSequence(directionalSequence: []const u8, allocator: std.mem.Allocator) []const u8 {
+    //std.debug.print("Finding the shortest directional pushes to enter the directional sequence ", .{});
+    printDirectionSeqAsDirections(directionalSequence);
+    //std.debug.print("\n", .{});
+    var cur_loc: u8 = 'A';
+    var sequences_so_far = std.StringHashMap(void).init(allocator);
+    defer sequences_so_far.deinit();
+    sequences_so_far.put(allocator.dupe(u8, &.{}) catch unreachable, {}) catch unreachable;
+
+    var new_candidate_sequences = std.StringHashMap(void).init(allocator);
+    defer new_candidate_sequences.deinit();
+
+    for (directionalSequence) |c| {
+        const move = shortestSequenceToMoveDirectionalFromAToB(cur_loc, c, allocator);
+        var move_with_enter = allocator.alloc(u8, move.len + 1) catch unreachable;
+        for (move, 0..) |move_c, i| {
+            move_with_enter[i] = move_c;
+        }
+        move_with_enter[move.len] = 65;
+        allocator.free(move);
+
+        var seq_it = sequences_so_far.keyIterator();
+        while (seq_it.next()) |seq_so_far| {
+            new_candidate_sequences.put(util.concatString(seq_so_far.*, move_with_enter) catch unreachable, {}) catch unreachable;
+        }
+
+        allocator.free(move_with_enter);
+
+        cur_loc = c;
+        sequences_so_far.clearRetainingCapacity();
+        var cands_it = new_candidate_sequences.keyIterator();
+        while (cands_it.next()) |next| {
+            sequences_so_far.put(next.*, {}) catch unreachable;
+        }
+        new_candidate_sequences.clearRetainingCapacity();
+    }
+
+    expect(sequences_so_far.count() == 1) catch unreachable;
+
+    var seq_it = sequences_so_far.keyIterator();
+    while (seq_it.next()) |next| {
+        return next.*;
+    }
+    unreachable;
+}
+
+// Unlike `...toMoveNumeric...`, `u8` here are the literal symbols on the keys
+fn shortestSequenceToMoveDirectionalFromAToB(a: u8, b: u8, allocator: std.mem.Allocator) []const u8 {
+    if (a == b) {
+        return allocator.alloc(u8, 0) catch unreachable;
+    }
+    // Codes:
+    // < = 60
+    // > = 62
+    // A = 65
+    // ^ = 94
+    // v = 118
+    if (a > b) {
+        const sequenceForBToA = shortestSequenceToMoveDirectionalFromAToB(b, a, allocator);
+        const response = invertASequence(sequenceForBToA, allocator);
+        allocator.free(sequenceForBToA);
+        return response;
+    }
+    return switch (a) {
+        '<' => switch (b) {
+            '>' => allocator.dupe(u8, &.{ '>', '>' }) catch unreachable,
+            'A' => allocator.dupe(u8, &.{ '>', '>', '^' }) catch unreachable,
+            '^' => allocator.dupe(u8, &.{ '>', '^' }) catch unreachable,
+            'v' => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            else => unreachable,
+        },
+        '>' => switch (b) {
+            'A' => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            '^' => allocator.dupe(u8, &.{ '<', '^' }) catch unreachable,
+            'v' => allocator.dupe(u8, &.{'<'}) catch unreachable,
+            else => unreachable,
+        },
+        'A' => switch (b) {
+            '^' => allocator.dupe(u8, &.{'<'}) catch unreachable,
+            'v' => allocator.dupe(u8, &.{ '<', 'v' }) catch unreachable,
+            else => unreachable,
+        },
+        '^' => switch (b) {
+            'v' => allocator.dupe(u8, &.{'v'}) catch unreachable,
+            else => unreachable,
+        },
+        else => unreachable,
+    };
+}
+
+fn shortestDirectionalPushToEnterNumericSequence(numericSequence: []const u8, allocator: std.mem.Allocator) []const u8 {
     var cur_number: u8 = 10;
+    // Keeping this as just a StringHashMap in carry-over from `21_abandoned`, even though there will only ever be a
+    // single string at each stage.
+    // But this way I don't have to worry about Zig's memory management with the fact that the "string" will change
+    // size :P
     var sequences_so_far = std.StringHashMap(void).init(allocator);
     defer sequences_so_far.deinit();
     sequences_so_far.put(allocator.dupe(u8, &.{}) catch unreachable, {}) catch unreachable;
@@ -13,36 +174,42 @@ fn shortestDirectionalPushesToEnterNumericSequence(numericSequence: []const u8, 
     defer new_candidate_sequences.deinit();
 
     for (numericSequence) |c| {
-        std.debug.print("Consuming {c} from numericSequence\n", .{c});
+        //std.debug.print("Consuming {c} from numericSequence\n", .{c});
         const numericSequenceCharAsNumber = numericSequenceCharToNumber(c);
-        const moves = shortestSequencesToMoveNumericFromAToB(cur_number, numericSequenceCharAsNumber, allocator);
-        std.debug.print("DEBUG - moves are:\n", .{});
-        for (moves) |move| {
-            printDirectionSeqAsDirections(move);
-            std.debug.print("\n", .{});
+        const move = shortestSequenceToMoveNumericFromAToB(cur_number, numericSequenceCharAsNumber, allocator);
+        //std.debug.print("DEBUG - moves are:\n", .{});
+        // for (moves) |move| {
+        //     printDirectionSeqAsDirections(move);
+        //std.debug.print("\n", .{});
+        // }
+        var move_with_enter = allocator.alloc(u8, move.len + 1) catch unreachable;
+        for (move, 0..) |move_c, i| {
+            move_with_enter[i] = move_c;
         }
-        const movesWithEnter = appendSequencesWith(moves, 65, allocator);
-        std.debug.print("And with a trailing `A`, they are:\n", .{});
-        for (movesWithEnter) |move| {
-            printDirectionSeqAsDirections(move);
-            std.debug.print("\n", .{});
-        }
+        move_with_enter[move.len] = 65;
+        allocator.free(move);
+
+        //std.debug.print("And with a trailing `A`, they are:\n", .{});
+        // for (movesWithEnter) |move| {
+        //     printDirectionSeqAsDirections(move);
+        //std.debug.print("\n", .{});
+        // }
 
         var seq_it = sequences_so_far.keyIterator();
         while (seq_it.next()) |seq_so_far| {
-            for (movesWithEnter) |new_moves| {
-                std.debug.print("About to concat these moves:", .{});
-                printDirectionSeqAsDirections(seq_so_far.*);
-                std.debug.print(", ", .{});
-                printDirectionSeqAsDirections(new_moves);
-                std.debug.print("\n", .{});
-                new_candidate_sequences.put(util.concatString(seq_so_far.*, new_moves) catch unreachable, {}) catch unreachable;
-            }
+            // for (movesWithEnter) |new_moves| {
+            //std.debug.print("About to concat these moves:", .{});
+            // printDirectionSeqAsDirections(seq_so_far.*);
+            //std.debug.print(", ", .{});
+            // printDirectionSeqAsDirections(new_moves);
+            //std.debug.print("\n", .{});
+            new_candidate_sequences.put(util.concatString(seq_so_far.*, move_with_enter) catch unreachable, {}) catch unreachable;
+            // }
         }
-        for (movesWithEnter) |new_moves| {
-            allocator.free(new_moves);
-        }
-        allocator.free(movesWithEnter);
+        // for (movesWithEnter) |new_moves| {
+        //     allocator.free(new_moves);
+        // }
+        allocator.free(move_with_enter);
 
         // At this point, `new_candidate_sequences` contains all the new aggregated sequences - so, transfer them to
         // `sequences_so_far`.
@@ -57,12 +224,13 @@ fn shortestDirectionalPushesToEnterNumericSequence(numericSequence: []const u8, 
         new_candidate_sequences.clearRetainingCapacity();
     }
 
-    var response = std.ArrayList([]const u8).init(allocator);
+    expect(sequences_so_far.count() == 1) catch unreachable;
+
     var seq_it = sequences_so_far.keyIterator();
     while (seq_it.next()) |next| {
-        response.append(next.*) catch unreachable;
+        return next.*;
     }
-    return response.toOwnedSlice() catch unreachable;
+    unreachable;
 }
 
 // Translates from "the Unicode number _of_ the number" to "the actual number" (or, from A=>10)
@@ -77,163 +245,110 @@ fn numericSequenceCharToNumber(numericSequenceChar: u8) u8 {
 // Use `10` to represent `A`
 // If we wanted, we could introduce a `rotate` function to, say, define `1->6` in terms of `7->2` - but I think that's
 // over-abstraction.
-fn shortestSequencesToMoveNumericFromAToB(a: u8, b: u8, allocator: std.mem.Allocator) []const []const u8 {
+fn shortestSequenceToMoveNumericFromAToB(a: u8, b: u8, allocator: std.mem.Allocator) []const u8 {
     if (a == b) {
-        return allocator.alloc([]u8, 0) catch unreachable;
+        return allocator.alloc(u8, 0) catch unreachable;
     }
     if (a > b) {
-        const sequencesForBToA = shortestSequencesToMoveNumericFromAToB(b, a, allocator);
-        var op = std.ArrayList([]u8).init(allocator);
-        for (sequencesForBToA) |sequence| {
-            op.append(invertASequence(sequence, allocator)) catch unreachable;
-            allocator.free(sequence);
-        }
-        allocator.free(sequencesForBToA);
-        return op.toOwnedSlice() catch unreachable;
+        const sequenceForBToA = shortestSequenceToMoveNumericFromAToB(b, a, allocator);
+        const response = invertASequence(sequenceForBToA, allocator);
+        allocator.free(sequenceForBToA);
+        return response;
     }
     // Taking inspiration from https://ziggit.dev/t/how-to-free-or-identify-a-slice-literal/8188/3
     return switch (a) {
         0 => switch (b) {
-            1 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '<' }) catch unreachable}) catch unreachable,
-            2 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            3 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^' }) catch unreachable }) catch unreachable,
-            4 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '^', '<', '^' }) catch unreachable }) catch unreachable,
-            5 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '^' }) catch unreachable}) catch unreachable,
-            6 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>', '^' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '^' }) catch unreachable }) catch unreachable,
-            7 => {
-                const twoToSeven = shortestSequencesToMoveNumericFromAToB(2, 7, allocator);
-                return prependSequencesWith(twoToSeven, '^', allocator);
-            },
-            8 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '^', '^' }) catch unreachable}) catch unreachable,
-            9 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '^', '^', '>', '^' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>', '^', '^' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '^', '^' }) catch unreachable }) catch unreachable,
-            10 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
+            1 => allocator.dupe(u8, &.{ '^', '<' }) catch unreachable,
+            2 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            3 => allocator.dupe(u8, &.{ '^', '>' }) catch unreachable,
+            4 => allocator.dupe(u8, &.{ '^', '^', '<' }) catch unreachable,
+            5 => allocator.dupe(u8, &.{ '^', '^' }) catch unreachable,
+            6 => allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable,
+            7 => allocator.dupe(u8, &.{ '^', '^', '^', '<' }) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '^', '^', '^' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '^', '^', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{'>'}) catch unreachable,
             else => unreachable,
         },
         1 => switch (b) {
-            0 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '>', 'v' }) catch unreachable}) catch unreachable,
-            2 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            3 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '>', '>' }) catch unreachable}) catch unreachable,
-            4 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            5 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^' }) catch unreachable }) catch unreachable,
-            6 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '>', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '>', '^' }) catch unreachable }) catch unreachable,
-            7 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '^' }) catch unreachable}) catch unreachable,
-            8 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>', '^' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '^' }) catch unreachable }) catch unreachable,
-            9 => {
-                const fourToNine = shortestSequencesToMoveNumericFromAToB(4, 9, allocator);
-                const fourBasedMoves = prependSequencesWith(fourToNine, '^', allocator);
-
-                const twoToNine = shortestSequencesToMoveNumericFromAToB(2, 9, allocator);
-                const twoBasedMoves = prependSequencesWith(twoToNine, '>', allocator);
-                return joinSlices(fourBasedMoves, twoBasedMoves, allocator);
-            },
-            10 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '>', '>', 'v' }) catch unreachable, allocator.dupe(u8, &.{ '>', 'v', '>' }) catch unreachable }) catch unreachable,
+            2 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            3 => allocator.dupe(u8, &.{ '>', '>' }) catch unreachable,
+            4 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            5 => allocator.dupe(u8, &.{ '^', '>' }) catch unreachable,
+            6 => allocator.dupe(u8, &.{ '^', '>', '>' }) catch unreachable,
+            7 => allocator.dupe(u8, &.{ '^', '^' }) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '^', '>', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{ '>', '>', 'v' }) catch unreachable,
             else => unreachable,
         },
         2 => switch (b) {
-            3 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            4 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^' }) catch unreachable }) catch unreachable,
-            5 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            6 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^' }) catch unreachable }) catch unreachable,
-            7 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '^', '<', '^' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^', '^' }) catch unreachable }) catch unreachable,
-            8 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '^' }) catch unreachable}) catch unreachable,
-            9 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>', '^' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '^' }) catch unreachable }) catch unreachable,
-            10 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '>', 'v' }) catch unreachable, allocator.dupe(u8, &.{ 'v', '>' }) catch unreachable }) catch unreachable,
+            3 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            4 => allocator.dupe(u8, &.{ '<', '^' }) catch unreachable,
+            5 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            6 => allocator.dupe(u8, &.{ '^', '>' }) catch unreachable,
+            7 => allocator.dupe(u8, &.{ '<', '^', '^' }) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '^', '^' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '^', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{ 'v', '>' }) catch unreachable,
             else => unreachable,
         },
         3 => switch (b) {
-            4 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '<', '^' }) catch unreachable }) catch unreachable,
-            5 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^' }) catch unreachable }) catch unreachable,
-            6 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            7 => {
-                const sixToSeven = shortestSequencesToMoveNumericFromAToB(6, 7, allocator);
-                const sixBasedMoves = prependSequencesWith(sixToSeven, '^', allocator);
-
-                const twoToSeven = shortestSequencesToMoveNumericFromAToB(2, 7, allocator);
-                const twoBasedMoves = prependSequencesWith(twoToSeven, '<', allocator);
-                return joinSlices(sixBasedMoves, twoBasedMoves, allocator);
-            },
-            8 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '^', '<', '^' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^', '^' }) catch unreachable }) catch unreachable,
-            9 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '^' }) catch unreachable}) catch unreachable,
-            10 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'v'}) catch unreachable}) catch unreachable,
+            4 => allocator.dupe(u8, &.{ '<', '<', '^' }) catch unreachable,
+            5 => allocator.dupe(u8, &.{ '<', '^' }) catch unreachable,
+            6 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            7 => allocator.dupe(u8, &.{
+                '<',
+                '<',
+                '^',
+                '^',
+            }) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '<', '^', '^' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '^' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{'v'}) catch unreachable,
             else => unreachable,
         },
         4 => switch (b) {
-            5 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            6 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '>', '>' }) catch unreachable}) catch unreachable,
-            7 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            8 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '>', '^' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>' }) catch unreachable }) catch unreachable,
-            9 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '>', '>' }) catch unreachable, allocator.dupe(u8, &.{ '>', '^', '>' }) catch unreachable, allocator.dupe(u8, &.{ '^', '>', '>' }) catch unreachable }) catch unreachable,
-            10 => {
-                const fiveToA = shortestSequencesToMoveNumericFromAToB(5, 10, allocator);
-                const fiveBasedMoves = prependSequencesWith(fiveToA, '>', allocator);
-
-                const oneToA = shortestSequencesToMoveNumericFromAToB(1, 10, allocator);
-                const oneBasedMoves = prependSequencesWith(oneToA, 'v', allocator);
-                return joinSlices(fiveBasedMoves, oneBasedMoves, allocator);
-            },
+            5 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            6 => allocator.dupe(u8, &.{ '>', '>' }) catch unreachable,
+            7 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '>', '^' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '>', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{ '>', '>', 'v', 'v' }) catch unreachable,
             else => unreachable,
         },
         5 => switch (b) {
-            6 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            7 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^' }) catch unreachable }) catch unreachable,
-            8 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            9 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '^', '>' }) catch unreachable}) catch unreachable,
-            10 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ 'v', 'v', '>' }) catch unreachable, allocator.dupe(u8, &.{ 'v', '>', 'v' }) catch unreachable, allocator.dupe(u8, &.{ '>', 'v', 'v' }) catch unreachable }) catch unreachable,
+            6 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            7 => allocator.dupe(u8, &.{ '^', '<' }) catch unreachable,
+            8 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '^', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{ 'v', 'v', '>' }) catch unreachable,
             else => unreachable,
         },
         6 => switch (b) {
-            7 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '^', '<', '<' }) catch unreachable }) catch unreachable,
-            8 => allocator.dupe([]u8, &.{ allocator.dupe(u8, &.{ '^', '<' }) catch unreachable, allocator.dupe(u8, &.{ '<', '^' }) catch unreachable }) catch unreachable,
-            9 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'^'}) catch unreachable}) catch unreachable,
-            10 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ 'v', 'v' }) catch unreachable}) catch unreachable,
+            7 => allocator.dupe(u8, &.{ '<', '<', '^' }) catch unreachable,
+            8 => allocator.dupe(u8, &.{ '<', '^' }) catch unreachable,
+            9 => allocator.dupe(u8, &.{'^'}) catch unreachable,
+            10 => allocator.dupe(u8, &.{ 'v', 'v' }) catch unreachable,
             else => unreachable,
         },
         7 => switch (b) {
-            8 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            9 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ '>', '>' }) catch unreachable}) catch unreachable,
-            10 => {
-                const eightToA = shortestSequencesToMoveNumericFromAToB(8, 10, allocator);
-                const eightBasedMoves = prependSequencesWith(eightToA, '>', allocator);
-
-                const fourToA = shortestSequencesToMoveNumericFromAToB(4, 10, allocator);
-                const fourBasedMoves = prependSequencesWith(fourToA, 'v', allocator);
-                return joinSlices(eightBasedMoves, fourBasedMoves, allocator);
-            },
+            8 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            9 => allocator.dupe(u8, &.{ '>', '>' }) catch unreachable,
+            10 => allocator.dupe(u8, &.{ '>', '>', 'v', 'v', 'v' }) catch unreachable,
             else => unreachable,
         },
         8 => switch (b) {
-            9 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{'>'}) catch unreachable}) catch unreachable,
-            10 => {
-                const nineToA = shortestSequencesToMoveNumericFromAToB(9, 10, allocator);
-                const nineBasedMoves = prependSequencesWith(nineToA, '>', allocator);
-
-                const fiveToA = shortestSequencesToMoveNumericFromAToB(5, 10, allocator);
-                const fiveBasedMoves = prependSequencesWith(fiveToA, 'v', allocator);
-                return joinSlices(nineBasedMoves, fiveBasedMoves, allocator);
-            },
+            9 => allocator.dupe(u8, &.{'>'}) catch unreachable,
+            10 => allocator.dupe(u8, &.{ 'v', 'v', 'v', '>' }) catch unreachable,
             else => unreachable,
         },
         9 => switch (b) {
-            10 => allocator.dupe([]u8, &.{allocator.dupe(u8, &.{ 'v', 'v', 'v' }) catch unreachable}) catch unreachable,
+            10 => allocator.dupe(u8, &.{ 'v', 'v', 'v' }) catch unreachable,
             else => unreachable,
         },
         else => unreachable,
     };
-}
-
-// Need to make these via a separate function rather than using the `&.{&.{...}}` syntax, because the latter doesn't use
-// an allocator and so attempts to `free` them will give bus errors.
-// This language is _really_ awkward sometimes...
-fn makeSliceOfSlices(strings: []const []const u8, allocator: std.mem.Allocator) [][]u8 {
-    var op = std.ArrayList([]u8).init(allocator);
-    for (strings) |string| {
-        var slice = allocator.alloc(u8, string.len) catch unreachable;
-        for (string, 0..) |c, i| {
-            slice[i] = c;
-        }
-        op.append(slice) catch unreachable;
-    }
-    return op.toOwnedSlice() catch unreachable;
 }
 
 // To save having to type out _all_ the options above, only type out the ones where the number is increasing, then
@@ -254,202 +369,43 @@ fn invertASequence(sequence: []const u8, allocator: std.mem.Allocator) []u8 {
     return op.toOwnedSlice() catch unreachable;
 }
 
-fn joinSlices(a: []const []const u8, b: []const []const u8, allocator: std.mem.Allocator) []const []const u8 {
-    var op = std.ArrayList([]const u8).init(allocator);
-    for (a) |seq| {
-        op.append(seq) catch unreachable;
-    }
-    for (b) |seq| {
-        op.append(seq) catch unreachable;
-    }
-    allocator.free(a);
-    allocator.free(b);
-    return op.toOwnedSlice() catch unreachable;
-}
-
-fn prependSequencesWith(seqs: []const []const u8, prefix: u8, allocator: std.mem.Allocator) [][]u8 {
-    const resp = allocator.alloc([]u8, seqs.len) catch unreachable;
-    for (seqs, 0..) |seq, i| {
-        var new_seq = allocator.alloc(u8, seq.len + 1) catch unreachable;
-        new_seq[0] = prefix;
-        for (seq, 0..) |c, j| {
-            new_seq[j + 1] = c;
-        }
-        resp[i] = new_seq;
-        allocator.free(seq);
-    }
-    allocator.free(seqs);
-    return resp;
-}
-
-fn appendSequencesWith(seqs: []const []const u8, suffix: u8, allocator: std.mem.Allocator) [][]u8 {
-    const resp = allocator.alloc([]u8, seqs.len) catch unreachable;
-    for (seqs, 0..) |seq, i| {
-        var new_seq = allocator.alloc(u8, seq.len + 1) catch unreachable;
-        for (seq, 0..) |c, j| {
-            new_seq[j] = c;
-        }
-        new_seq[seq.len] = suffix;
-        resp[i] = new_seq;
-        allocator.free(seq);
-    }
-    allocator.free(seqs);
-    return resp;
-}
-
-const NumericRobotError = error{ OutOfBoundsError, GapError };
-
-// To test, implement an actual robot!
-const NumericRobot = struct {
-    pos: Point,
-    pub fn move(self: *NumericRobot, m: u8) void {
-        switch (m) {
-            '^' => self.pos.y += 1,
-            '>' => self.pos.x += 1,
-            'v' => self.pos.y -= 1,
-            '<' => self.pos.x -= 1,
-            else => {
-                std.debug.print("Encountered unparsable move {}\n", .{m});
-                unreachable;
-            },
-        }
-    }
-
-    pub fn process(self: *NumericRobot, moves: []const u8) NumericRobotError!void {
-        for (moves) |m| {
-            self.move(m);
-            if (self.pos.x == 0 and self.pos.y == 0) {
-                return NumericRobotError.GapError;
-            }
-            // No need to check for <0 as that'll be a language error anyway
-            if (self.pos.x > 2 or self.pos.y > 3) {
-                return NumericRobotError.OutOfBoundsError;
-            }
-        }
-        return {};
-    }
-
-    pub fn pointForNumber(number: u8) Point {
-        return switch (number) {
-            0 => Point{ .x = 1, .y = 0 },
-            1...9 => {
-                const x = (number - 1) % 3;
-                const y = @divFloor(number - 1, 3) + 1;
-                return Point{ .x = x, .y = y };
-            },
-            10 => Point{ .x = 2, .y = 0 },
-            else => unreachable,
-        };
-    }
-
-    pub fn numberForPoint(point: Point) u8 {
-        if (point.y > 0 and point.y < 4 and point.x >= 0 and point.x < 3) {
-            return 3 * (point.y - 1) + point.x + 1;
-        }
-        if (point.y == 0) {
-            switch (point.x) {
-                1 => return 0,
-                2 => return 10,
-                else => unreachable,
-            }
-        }
-        unreachable;
-    }
-};
-
-fn makeZeroToOneSequenceDirectly(allocator: std.mem.Allocator) [][]const u8 {
-    var op = std.ArrayList([]const u8).init(allocator);
-    op.append("hello") catch unreachable;
-    return op.toOwnedSlice() catch unreachable;
-}
-
 fn printDirectionSeqAsDirections(seq: []const u8) void {
     for (seq) |c| {
         std.debug.print("{c}", .{c});
     }
 }
 
-test "Basic Movement" {
+test "Shortest sequence for 0-loops" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var seqs = shortestSequencesToMoveNumericFromAToB(0, 7, allocator);
-    for (seqs) |seq| {
-        var robot = NumericRobot{ .pos = Point{ .x = 1, .y = 0 } };
-        robot.process(seq) catch unreachable;
-        try expect(std.meta.eql(robot.pos, Point{ .x = 0, .y = 3 }));
-        allocator.free(seq); // TODO - I could probably do some fancy shenanigans with `errdefer` here (and elsewhere)
-    }
-    allocator.free(seqs); // I don't know why this is necessary!? I'm re-allocating to it on the next line :shrug:
-
-    seqs = shortestSequencesToMoveNumericFromAToB(7, 0, allocator);
-    for (seqs) |seq| {
-        var robot = NumericRobot{ .pos = Point{ .x = 0, .y = 3 } };
-        robot.process(seq) catch unreachable;
-        try expect(std.meta.eql(robot.pos, Point{ .x = 1, .y = 0 }));
-        allocator.free(seq);
-    }
-    allocator.free(seqs);
-
-    seqs = shortestSequencesToMoveNumericFromAToB(0, 1, allocator);
-    for (seqs) |seq| {
-        var robot = NumericRobot{ .pos = Point{ .x = 1, .y = 0 } };
-        robot.process(seq) catch unreachable;
-        const expected_point = Point{ .x = 0, .y = 1 };
-        try expect(std.meta.eql(robot.pos, expected_point));
-        allocator.free(seq);
-    }
-    allocator.free(seqs);
+    const shortest_sequence = shortestDirectionalPushToEnterNumericSequence("029A", allocator);
+    printDirectionSeqAsDirections(shortest_sequence);
 }
 
-test "Exhaustive Movement test" {
+test "Looping 3 times" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    for (0..11) |i| {
-        for (0..11) |j| {
-            const i_as_u8: u8 = @intCast(i);
-            const j_as_u8: u8 = @intCast(j);
-            const seqs = shortestSequencesToMoveNumericFromAToB(i_as_u8, j_as_u8, allocator);
-            for (seqs) |seq| {
-                var robot = NumericRobot{ .pos = NumericRobot.pointForNumber(i_as_u8) };
-                robot.process(seq) catch unreachable;
-                try expect(std.meta.eql(robot.pos, NumericRobot.pointForNumber(j_as_u8)));
-                allocator.free(seq);
-            }
-            allocator.free(seqs);
-        }
-    }
-}
+    const min_length = findLengthOfShortestResultOfLoopingNTimes("029A", 3, allocator);
+    std.debug.print("min_length is {}\n", .{min_length});
+    try expect(min_length == 68);
 
-test "Shortest sequences for first level of indirection" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const min_length_1 = findLengthOfShortestResultOfLoopingNTimes("980A", 3, allocator);
+    std.debug.print("min_length of 980A is {}\n", .{min_length_1});
+    try expect(min_length_1 == 60);
 
-    const sequences = shortestDirectionalPushesToEnterNumericSequence("029A", allocator);
-    defer allocator.free(sequences);
-    // for readable output, uncomment the lines below
-    // ---------
-    // for (sequences) |seq| {
-    //     printDirectionSeqAsDirections(seq);
-    //     std.debug.print("\n", .{});
-    //     // Not sure why we don't need to `allocator.free(seq)` here :shrug:
-    // }
-    // ---------
-    const targetSequence = allocator.dupe(u8, &.{ '<', 'A', '^', 'A', '>', '^', '^', 'A', 'v', 'v', 'v', 'A' }) catch unreachable;
-    defer allocator.free(targetSequence);
-    var foundTargetSequence = false;
-    for (sequences) |seq| {
-        if (std.mem.eql(u8, seq, targetSequence)) {
-            foundTargetSequence = true;
-            break;
-        } else {
-            std.debug.print("Found the following sequence: ", .{});
-            printDirectionSeqAsDirections(seq);
-        }
-    }
-    try expect(foundTargetSequence);
+    const min_length_2 = findLengthOfShortestResultOfLoopingNTimes("179A", 3, allocator);
+    std.debug.print("min_length of 179A is {}\n", .{min_length_2});
+    try expect(min_length_2 == 68);
+
+    const min_length_3 = findLengthOfShortestResultOfLoopingNTimes("456A", 3, allocator);
+    std.debug.print("min_length of 456A is {}\n", .{min_length_3});
+    try expect(min_length_3 == 64);
+
+    const min_length_4 = findLengthOfShortestResultOfLoopingNTimes("379A", 3, allocator);
+    std.debug.print("min_length of 379A is {}\n", .{min_length_4});
+    try expect(min_length_4 == 64);
 }
